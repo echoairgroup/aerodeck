@@ -1,0 +1,468 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String    @id @default(cuid())
+  email                String    @unique
+  passwordHash         String
+  name                 String
+  callsign             String?
+  experienceLevel      String    @default("intermediate")
+  homeAirportIcao      String?
+  preferredSimulator   String?
+  preferredNetwork     String?
+  locale               String    @default("en")
+  theme                String    @default("dark")
+  beginnerHints        Boolean   @default(true)
+  reducedMotion        Boolean   @default(false)
+  onboardingCompleted  Boolean   @default(false)
+  dashboardLayout      String    @default("[]")
+  weatherAirports      String    @default("[\"EHAM\",\"EDDL\",\"LGSM\",\"LGIO\"]")
+  units                String    @default("{}")
+  notificationPrefs    String    @default("{}")
+  simbriefUsername     String?
+  simbriefPilotId      String?
+  simbriefLastImportAt DateTime?
+  simbriefLastStatus   String?
+  vatsimCid            String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  flights          Flight[]
+  logs             FlightLog[]
+  favorites        Favorite[]
+  notes            Note[]
+  notifications    Notification[]
+  recents          RecentlyViewed[]
+  quizAttempts     QuizAttempt[]
+  lessonProgress   LessonProgress[]
+  checklists       Checklist[]
+  eventFavorites   EventFavorite[]
+  helpfulVotes     ArticleFeedback[]
+}
+
+model Flight {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  callsign        String
+  airlineIcao     String?
+  aircraftIcao    String?
+  registration    String?
+  departureIcao   String
+  destinationIcao String
+  alternateIcao   String?
+  flightRules     String    @default("IFR")
+  flightNumber    String?
+  cruiseAltitude  Int?
+  route           String?
+  simulator       String?
+  network         String?
+  remarks         String?
+  status          String    @default("planned")
+  phase           String    @default("briefing")
+  source          String    @default("manual")
+  ofpJson         String?
+  ofpImportedAt   DateTime?
+  personalNotes   String?
+  operationalNotes String?
+  isDemo          Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  logs            FlightLog[]
+
+  @@index([userId, createdAt])
+  @@index([departureIcao, destinationIcao])
+}
+
+model FlightLog {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  flightId       String?
+  flight         Flight?  @relation(fields: [flightId], references: [id], onDelete: SetNull)
+  date           DateTime
+  aircraftIcao   String?
+  registration   String?
+  callsign       String?
+  departureIcao  String
+  destinationIcao String
+  alternateIcao  String?
+  blockMinutes   Int?
+  flightMinutes  Int?
+  simulator      String?
+  network        String?
+  airlineIcao    String?
+  route          String?
+  notes          String?
+  landingRateFpm Int?
+  rating         Int?
+  weatherSummary String?
+  comments       String?
+  isDemo         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId, date])
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String
+  targetId  String
+  label     String?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, kind, targetId])
+  @@index([userId, kind])
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scope     String
+  targetId  String
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, scope, targetId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String
+  href      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read, createdAt])
+}
+
+model RecentlyViewed {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String
+  targetId  String
+  label     String
+  href      String
+  viewedAt  DateTime @default(now())
+
+  @@index([userId, viewedAt])
+}
+
+model Country {
+  code      String    @id
+  name      String
+  continent String?
+  airports  Airport[]
+}
+
+model Airport {
+  id                Int      @id
+  ident             String   @unique
+  icaoCode          String?
+  iataCode          String?
+  type              String
+  name              String
+  latitudeDeg       Float
+  longitudeDeg      Float
+  elevationFt       Int?
+  continent         String?
+  isoCountry        String?
+  country           Country? @relation(fields: [isoCountry], references: [code])
+  isoRegion         String?
+  municipality      String?
+  scheduledService  Boolean  @default(false)
+  homeLink          String?
+  wikipediaLink     String?
+  keywords          String?
+  magneticVariation String?
+  timezone          String?
+  source            String   @default("OurAirports")
+  sourceUrl         String   @default("https://ourairports.com/data/")
+  lastVerified      DateTime @default(now())
+  runways           Runway[]
+  frequencies       Frequency[]
+
+  @@index([icaoCode])
+  @@index([iataCode])
+  @@index([isoCountry])
+  @@index([name])
+  @@index([municipality])
+}
+
+model Runway {
+  id            Int      @id
+  airportId     Int
+  airport       Airport  @relation(fields: [airportId], references: [id], onDelete: Cascade)
+  lengthFt      Int?
+  widthFt       Int?
+  surface       String?
+  lighted       Boolean  @default(false)
+  closed        Boolean  @default(false)
+  leIdent       String?
+  leLatitude    Float?
+  leLongitude   Float?
+  leElevationFt Int?
+  leHeadingDeg  Float?
+  leDisplacedFt Int?
+  heIdent       String?
+  heLatitude    Float?
+  heLongitude   Float?
+  heElevationFt Int?
+  heHeadingDeg  Float?
+  heDisplacedFt Int?
+  source        String   @default("OurAirports")
+
+  @@index([airportId])
+}
+
+model Frequency {
+  id        Int     @id
+  airportId Int
+  airport   Airport @relation(fields: [airportId], references: [id], onDelete: Cascade)
+  type      String
+  description String?
+  frequencyMhz Float
+  source    String  @default("OurAirports")
+
+  @@index([airportId])
+  @@index([type])
+}
+
+model Aircraft {
+  id              String   @id
+  icao            String   @unique
+  name            String
+  manufacturer    String
+  category        String
+  family          String?
+  engines         Int?
+  engineType      String?
+  seatingTypical  Int?
+  rangeNm         Int?
+  cruiseKt        Int?
+  serviceCeilingFt Int?
+  mtowKg          Int?
+  mlwKg           Int?
+  fuelCapacityKg  Int?
+  wingspanM       Float?
+  lengthM         Float?
+  heightM         Float?
+  trivia          String?
+  simAvailability String?
+  sourcesJson     String
+  lastVerified    DateTime
+  variants        AircraftVariant[]
+}
+
+model AircraftVariant {
+  id         String   @id @default(cuid())
+  aircraftId String
+  aircraft   Aircraft @relation(fields: [aircraftId], references: [id], onDelete: Cascade)
+  name       String
+  icao       String?
+  notes      String?
+}
+
+model Airline {
+  id          String  @id
+  icao        String  @unique
+  iata        String?
+  name        String
+  callsign    String?
+  country     String?
+  hubs        String?
+  fleetNotes  String?
+  pronunciation String?
+  wikipedia   String?
+  lastVerified DateTime
+  sourcesJson String
+}
+
+model Source {
+  id            String   @id @default(cuid())
+  name          String
+  url           String
+  publisher     String
+  category      String
+  publishedAt   String?
+  reliability   String
+  notes         String?
+  articles      ArticleSource[]
+}
+
+model Article {
+  id           String   @id
+  slug         String   @unique
+  title        String
+  summary      String
+  difficulty   String
+  category     String
+  subcategory  String?
+  content      String
+  locale       String   @default("en")
+  lastReviewed DateTime
+  relatedSlugs String   @default("[]")
+  sources      ArticleSource[]
+  feedback     ArticleFeedback[]
+
+  @@index([category, difficulty])
+}
+
+model ArticleSource {
+  articleId String
+  sourceId  String
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  source    Source  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, sourceId])
+}
+
+model ArticleFeedback {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  articleId String
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  helpful   Boolean
+  createdAt DateTime @default(now())
+
+  @@unique([userId, articleId])
+}
+
+model GlossaryTerm {
+  id          String @id
+  abbreviation String
+  fullName    String
+  simple      String
+  technical   String
+  example     String?
+  category    String
+  related     String @default("[]")
+  sourcesJson String
+  lastReviewed DateTime
+
+  @@index([abbreviation])
+  @@index([category])
+}
+
+model Lesson {
+  id           String @id
+  slug         String @unique
+  course       String
+  title        String
+  summary      String
+  difficulty   String
+  content      String
+  order        Int
+  lastReviewed DateTime
+  sourcesJson  String
+  quiz         Quiz?
+  progress     LessonProgress[]
+}
+
+model LessonProgress {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonId  String
+  lesson    Lesson  @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  completed Boolean @default(false)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, lessonId])
+}
+
+model Quiz {
+  id       String     @id @default(cuid())
+  lessonId String     @unique
+  lesson   Lesson     @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  title    String
+  questions Question[]
+}
+
+model Question {
+  id            String @id @default(cuid())
+  quizId        String
+  quiz          Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  type          String
+  prompt        String
+  choicesJson   String
+  answer        String
+  explanation   String
+  order         Int
+}
+
+model QuizAttempt {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quizId      String
+  score       Int
+  total       Int
+  answersJson String
+  createdAt   DateTime @default(now())
+
+  @@index([userId, quizId])
+}
+
+model Checklist {
+  id          String          @id @default(cuid())
+  userId      String?
+  user        User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  aircraftIcao String?
+  name        String
+  phase       String
+  isSystem    Boolean         @default(false)
+  items       ChecklistItem[]
+}
+
+model ChecklistItem {
+  id          String    @id @default(cuid())
+  checklistId String
+  checklist   Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  order       Int
+  item        String
+  response    String
+  notes       String?
+}
+
+model Addon {
+  id           String   @id
+  name         String
+  developer    String
+  simulator    String
+  platform     String
+  priceType    String
+  description  String
+  url          String
+  lastVerified DateTime
+  tags         String
+  category     String
+}
+
+model EventFavorite {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventId   Int
+  createdAt DateTime @default(now())
+
+  @@unique([userId, eventId])
+}
