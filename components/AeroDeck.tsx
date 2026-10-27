@@ -24,7 +24,7 @@ const DEFAULT_PROFILE = { name: "Christian", callsign: "", home: "", sim: "MSFS 
 
 function cleanProfile(value: any) {
   const profile = { ...DEFAULT_PROFILE, ...(value && typeof value === "object" && !Array.isArray(value) ? value : {}) };
-  if (profile.callsign === "ECV412") profile.callsign = "";
+  if (profile.callsign === "ECV412") { profile.callsign = ""; if (profile.home === "EDDL") profile.home = ""; }
   return profile;
 }
 
@@ -159,6 +159,7 @@ export default function AeroDeck({ initialSection = "dashboard" }: { initialSect
   const [flights, setFlights] = useState<Flight[]>(defaultFlights());
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
   const [favorites, setFavorites] = useState<string[]>([]);
+  const [trainingDone, setTrainingDone] = useState<string[]>([]);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [toast, setToast] = useState("");
   const [db, setDb] = useState("checking");
@@ -174,6 +175,7 @@ export default function AeroDeck({ initialSection = "dashboard" }: { initialSect
           setProfile(cleanProfile(state.profile));
         }
         if (Array.isArray(state.favorites)) setFavorites(cleanFavorites(state.favorites));
+        if (Array.isArray(state.training)) setTrainingDone(state.training);
         if (state.notes) setNotes(state.notes);
       }
     } catch {}
@@ -188,17 +190,19 @@ export default function AeroDeck({ initialSection = "dashboard" }: { initialSect
         const cloudProfile = cleanProfile(rawProfile);
         const cloudFlights = cleanFlights(rawFlights);
         const cloudFavorites = cleanFavorites(rawFavorites);
+        const cloudTraining = JSON.parse(state.trainingJson || "[]");
         const cloudNotes = JSON.parse(state.notesJson || "{}");
         const isUninitialized =
           rawProfile && typeof rawProfile === "object" && !Array.isArray(rawProfile) && Object.keys(rawProfile).length === 0 &&
           cloudFlights.length === 0 && cloudFavorites.length === 0 &&
-          cloudNotes && typeof cloudNotes === "object" && !Array.isArray(cloudNotes) && Object.keys(cloudNotes).length === 0;
+          cloudNotes && typeof cloudNotes === "object" && !Array.isArray(cloudNotes) && Object.keys(cloudNotes).length === 0 && Array.isArray(cloudTraining) && cloudTraining.length === 0;
 
         // Empty cloud rows do not wipe local data. Legacy demo values are scrubbed before sync.
         if (!isUninitialized) {
           setProfile(cloudProfile);
           setFlights(cloudFlights);
           setFavorites(cloudFavorites);
+          if (Array.isArray(cloudTraining)) setTrainingDone(cloudTraining);
           if (cloudNotes && typeof cloudNotes === "object" && !Array.isArray(cloudNotes)) setNotes(cloudNotes);
         }
         setDb("online");
@@ -210,18 +214,18 @@ export default function AeroDeck({ initialSection = "dashboard" }: { initialSect
 
   useEffect(() => {
     try {
-      localStorage.setItem("aerodeck-state", JSON.stringify({ flights, profile, favorites, notes }));
+      localStorage.setItem("aerodeck-state", JSON.stringify({ flights, profile, favorites, notes, training: trainingDone }));
     } catch {}
     if (!cloudLoaded) return;
     const timer = window.setTimeout(() => {
       fetch("/api/state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ flights, profile, favorites, notes }),
+        body: JSON.stringify({ flights, profile, favorites, notes, training: trainingDone }),
       }).catch(() => {});
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [flights, profile, favorites, notes, cloudLoaded]);
+  }, [flights, profile, favorites, notes, trainingDone, cloudLoaded]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -304,6 +308,8 @@ export default function AeroDeck({ initialSection = "dashboard" }: { initialSect
             setFavorites={setFavorites}
             notes={notes}
             setNotes={setNotes}
+            trainingDone={trainingDone}
+            setTrainingDone={setTrainingDone}
             go={go}
             notify={notify}
           />
@@ -333,7 +339,7 @@ function Router(props: any) {
   if (props.section === "aircraft") return <Aircraft {...props} />;
   if (props.section === "weather") return <Weather />;
   if (props.section === "vatsim") return <Vatsim />;
-  if (props.section === "training") return <Training />;
+  if (props.section === "training") return <Training {...props} />;
   if (props.section === "knowledge") return <Knowledge />;
   if (props.section === "calculators") return <Calculators />;
   if (props.section === "logbook") return <Logbook {...props} />;
@@ -424,6 +430,8 @@ function SimBrief({ notify, setFlights, go }: any) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => { try { setUsername(localStorage.getItem("aerodeck-simbrief-id") || ""); } catch {} }, []);
 
   const load = async () => {
     const identifier = username.trim();
@@ -609,10 +617,8 @@ function Vatsim() {
   return <><Header eyebrow="NETWORK" title="VATSIM Live" desc="Live network data, controllers and events." action={<Badge tone={d?"live":"neutral"}>{d?"CONNECTED":"OFFLINE"}</Badge>}/><div className="stat-grid four"><Stat label="Clients" value={d?.general?.connected_clients?.toLocaleString()||"—"}/><Stat label="Pilots" value={d?.pilots?.length?.toLocaleString()||"—"}/><Stat label="Controllers" value={d?.controllers?.length?.toLocaleString()||"—"}/><Stat label="Updated" value={d?.general?.update_timestamp ? new Date(d.general.update_timestamp).toLocaleTimeString("en-GB") : "—"}/></div><div className="tabs">{[["traffic","Live Traffic"],["controllers","Controllers"],["events","Events"]].map((t)=><button className={tab===t[0]?"active":""} key={t[0]} onClick={()=>setTab(t[0])}>{t[1]}</button>)}</div>{tab==="traffic"&&<Card><div className="card-head"><h3>Aircraft on network</h3><input className="small-input" value={q} onChange={(e)=>setQ(e.target.value)} placeholder="Filter callsign / route"/></div><div className="table-wrap"><table><thead><tr><th>Callsign</th><th>Type</th><th>Route</th><th>Alt</th><th>GS</th><th>HDG</th></tr></thead><tbody>{pilots.map((p:any)=><tr key={String(p.cid)+p.callsign}><td>{p.callsign}</td><td>{p.flight_plan?.aircraft_short||"—"}</td><td>{p.flight_plan?.departure||"—"} → {p.flight_plan?.arrival||"—"}</td><td>{p.altitude?.toLocaleString()||"—"}</td><td>{p.groundspeed||"—"}</td><td>{p.heading||"—"}°</td></tr>)}</tbody></table></div></Card>}{tab==="controllers"&&<Card><div className="table-wrap"><table><thead><tr><th>Callsign</th><th>Frequency</th><th>Facility</th></tr></thead><tbody>{(d?.controllers||[]).slice(0,50).map((c:any)=><tr key={String(c.cid)+c.callsign}><td>{c.callsign}</td><td>{c.frequency}</td><td>{c.facility}</td></tr>)}</tbody></table></div></Card>}{tab==="events"&&<div className="grid-3">{events.slice(0,12).map((e:any)=><Card key={e.id}><small>{e.start_time ? new Date(e.start_time).toLocaleString("en-GB") : "Upcoming"}</small><h3>{e.name}</h3><p>{e.short_description||"VATSIM event"}</p>{e.link&&<a className="btn ghost full" href={e.link} target="_blank" rel="noreferrer">Open event</a>}</Card>)}</div>}</>;
 }
 
-function Training() {
-  const [done,setDone] = useState<string[]>([]);
-  useEffect(()=>{try{setDone(JSON.parse(localStorage.getItem("aerodeck-training")||"[]"))}catch{}},[]);
-  const toggle=(id:string)=>{const next=done.includes(id)?done.filter(x=>x!==id):[...done,id];setDone(next);localStorage.setItem("aerodeck-training",JSON.stringify(next));};
+function Training({ trainingDone: done, setTrainingDone: setDone }: any) {
+  const toggle=(id:string)=>{const next=done.includes(id)?done.filter((x:string)=>x!==id):[...done,id];setDone(next);};
   return <><Header eyebrow="TRAINING" title="Flight-sim training" desc="Structured learning for planning, IFR, radio work and airline operations."/><div className="grid-3">{lessons.map((l,i)=><Card key={l[0]}><Badge tone={done.includes(String(i))?"live":"accent"}>{done.includes(String(i))?"COMPLETE":"LESSON "+(i+1)}</Badge><h3>{l[0]}</h3><p>{l[1]}</p><button className="btn full" onClick={()=>toggle(String(i))}>{done.includes(String(i))?"Mark incomplete":"Complete lesson"}</button></Card>)}</div><Card><div className="progress-row"><b>Overall progress</b><span>{Math.round(done.length/lessons.length*100)}%</span></div><div className="progress"><i style={{width:(done.length/lessons.length*100)+"%"}} /></div></Card></>;
 }
 
@@ -676,9 +682,11 @@ function hours(fs:Flight[]) {
 }
 function bestLanding(fs:Flight[]) {
   const values = fs
-    .map((flight) => String(flight.landing || "").trim())
-    .filter((value) => value.length > 0)
-    .map((value) => Number(value.replace(/[^\\d-]/g, "")))
+    .map((flight) => String(flight.landing || "").match(/-?\\d+(?:\\.\\d+)?/))
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .map((match) => Number(match[0]))
     .filter((value) => Number.isFinite(value));
-  return values.length ? Math.min(...values) + " fpm" : "—";
+  if (!values.length) return "—";
+  const best = values.sort((a, b) => Math.abs(a) - Math.abs(b))[0];
+  return best + " fpm";
 }
