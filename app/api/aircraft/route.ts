@@ -12,6 +12,7 @@ type AircraftResult = {
 
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams.get("q")?.trim().slice(0, 100).toLowerCase() || "";
+  if (query.length < 2) return NextResponse.json({ items: [], source: "OpenFlights", sourceUrl: "https://openflights.org/data" });
 
   try {
     const response = await fetch("https://raw.githubusercontent.com/jpatokal/openflights/master/data/planes.dat", {
