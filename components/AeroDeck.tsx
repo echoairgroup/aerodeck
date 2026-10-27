@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+type FavoriteItem = { kind: "airport" | "aircraft"; code: string; label?: string };
+
 type Flight = {
   id: string;
   callsign: string;
@@ -42,11 +44,22 @@ function cleanFlights(value: any): Flight[] {
     });
 }
 
-function cleanFavorites(value: any): string[] {
+function cleanFavorites(value: any): FavoriteItem[] {
   if (!Array.isArray(value)) return [];
   const legacyDefaults = ["EHAM", "EDDL", "LGSM", "A21N"];
-  if (value.length === legacyDefaults.length && legacyDefaults.every((item, index) => value[index] === item)) return [];
-  return value.filter((item) => typeof item === "string");
+  if (value.length === legacyDefaults.length && legacyDefaults.every((item, index) => value[index] === legacyDefaults[index])) return [];
+  return value.map((item) => {
+    if (typeof item === "string") {
+      const code = item.trim().toUpperCase();
+      if (!code) return null;
+      const kind = aircraft.some((entry) => entry.icao === code) ? "aircraft" : "airport";
+      return { kind, code } as FavoriteItem;
+    }
+    if (item && typeof item === "object" && (item.kind === "airport" || item.kind === "aircraft") && typeof item.code === "string") {
+      return { kind: item.kind, code: item.code.toUpperCase(), ...(typeof item.label === "string" ? { label: item.label } : {}) } as FavoriteItem;
+    }
+    return null;
+  }).filter((item): item is FavoriteItem => item !== null);
 }
 
 function displayValue(...values: any[]): string {
@@ -170,7 +183,7 @@ export default function AeroDeck({ initialSection = "dashboard" }: { initialSect
   const [externalSearchError, setExternalSearchError] = useState("");
   const [flights, setFlights] = useState<Flight[]>(defaultFlights());
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
-  const [favorites, setFavorites] = useState<string[]>([]);
+  const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
   const [trainingDone, setTrainingDone] = useState<string[]>([]);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [toast, setToast] = useState("");
@@ -639,9 +652,12 @@ function Airports({ favorites, setFavorites, notes, setNotes }: any) {
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [q]);
 
+  const favoriteExists = !!sel?.icao && favorites.some((item:FavoriteItem) => item.kind === "airport" && item.code === sel.icao);
   const toggle = () => {
     if (!sel?.icao) return;
-    setFavorites(favorites.includes(sel.icao) ? favorites.filter((x:string)=>x!==sel.icao) : [...favorites,sel.icao]);
+    setFavorites((current: FavoriteItem[]) => favoriteExists
+      ? current.filter((item) => !(item.kind === "airport" && item.code === sel.icao))
+      : [...current, { kind: "airport", code: sel.icao, label: sel.name }]);
   };
   return <>
     <Header eyebrow="AIRPORTS" title="Airport Explorer" desc="Search airport identifiers, names, cities and IATA codes using the public OurAirports dataset. Runway details are shown only when available."/>
@@ -658,7 +674,7 @@ function Airports({ favorites, setFavorites, notes, setNotes }: any) {
         </div>
       </Card>
       {sel && <Card>
-        <div className="card-head"><div><small>AIRPORT PROFILE</small><h3>{sel.icao || sel.ident || "Identifier unavailable"}</h3></div><button className={"star "+(favorites.includes(sel.icao)?"on":"")} onClick={toggle} disabled={!sel.icao} aria-label="Toggle airport favourite">★</button></div>
+        <div className="card-head"><div><small>AIRPORT PROFILE</small><h3>{sel.icao || sel.ident || "Identifier unavailable"}</h3></div><button className={"star "+(favoriteExists?"on":"")} onClick={toggle} disabled={!sel.icao} aria-label="Toggle airport favourite">★</button></div>
         <h2>{sel.name}</h2>
         <p>{[sel.city,sel.country].filter(Boolean).join(", ") || "Location details not supplied"} · {sel.elev === null || sel.elev === undefined || sel.elev === "" ? "Elevation not supplied" : sel.elev+" ft"}</p>
         <div className="stat-grid four"><Stat label="ICAO / Ident" value={sel.icao || sel.ident || "—"}/><Stat label="IATA" value={sel.iata || "—"}/><Stat label="Elevation" value={sel.elev === null || sel.elev === undefined || sel.elev === "" ? "—" : sel.elev+" ft"}/><Stat label="Runways" value={sel.runways?.length ? sel.runways.length : "Not supplied"}/></div>
@@ -700,9 +716,12 @@ function Aircraft({ favorites, setFavorites, notes, setNotes }: any) {
     ? selected
     : list[0] || null;
   const noteKey = active?.icao || active?.name || "";
+  const favoriteExists = !!active?.icao && favorites.some((item:FavoriteItem) => item.kind === "aircraft" && item.code === active.icao);
   const toggle = () => {
     if (!active?.icao) return;
-    setFavorites(favorites.includes(active.icao) ? favorites.filter((x:string)=>x!==active.icao) : [...favorites,active.icao]);
+    setFavorites((current: FavoriteItem[]) => favoriteExists
+      ? current.filter((item) => !(item.kind === "aircraft" && item.code === active.icao))
+      : [...current, { kind: "aircraft", code: active.icao, label: active.name }]);
   };
 
   return <>
@@ -721,7 +740,7 @@ function Aircraft({ favorites, setFavorites, notes, setNotes }: any) {
         </div>
       </Card>
       {active && <Card>
-        <div className="card-head"><div><small>AIRCRAFT TYPE</small><h3>{active.icao || "ICAO code unavailable"}</h3></div><button className={"star "+(favorites.includes(active.icao)?"on":"")} onClick={toggle} disabled={!active.icao} aria-label="Toggle aircraft favourite">★</button></div>
+        <div className="card-head"><div><small>AIRCRAFT TYPE</small><h3>{active.icao || "ICAO code unavailable"}</h3></div><button className={"star "+(favoriteExists?"on":"")} onClick={toggle} disabled={!active.icao} aria-label="Toggle aircraft favourite">★</button></div>
         <h2>{active.name}</h2>
         <div className="stat-grid three"><Stat label="ICAO type code" value={active.icao || "—"}/><Stat label="IATA type code" value={active.iata || "—"}/><Stat label="Data source" value={active.source || sourceInfo?.source || "—"}/></div>
         <label className="field"><span>Personal aircraft note</span><textarea value={notes[noteKey] || ""} onChange={(e)=>setNotes({...notes,[noteKey]:e.target.value})} placeholder="Your aircraft notes…"/></label>
@@ -880,8 +899,21 @@ function Logbook({ flights,setFlights,notify }:any) {
 }
 
 function Favorites({ favorites, go }:any) {
-  const as=favorites.filter((x:string)=>airports.some(a=>a.icao===x)); const ac=favorites.filter((x:string)=>aircraft.some(a=>a.icao===x));
-  return <><Header eyebrow="SAVED" title="Favorites" desc="Your most-used airports and aircraft."/><div className="grid-2"><Card><h3>Airports</h3><div className="list">{as.map((x:string)=><button className="row button-row" key={x} onClick={()=>go("airports")}><div><b>{x}</b><span>{airports.find(a=>a.icao===x)?.name}</span></div><span>→</span></button>)}</div></Card><Card><h3>Aircraft</h3><div className="list">{ac.map((x:string)=><button className="row button-row" key={x} onClick={()=>go("aircraft")}><div><b>{x}</b><span>{aircraft.find(a=>a.icao===x)?.name}</span></div><span>→</span></button>)}</div></Card></div></>;
+  const savedAirports = favorites.filter((item: FavoriteItem) => item.kind === "airport");
+  const savedAircraft = favorites.filter((item: FavoriteItem) => item.kind === "aircraft");
+  return <>
+    <Header eyebrow="SAVED" title="Favorites" desc="Your saved airport and aircraft references."/>
+    <div className="grid-2">
+      <Card><h3>Airports</h3><div className="list">
+        {savedAirports.map((item:FavoriteItem)=><button className="row button-row" key={item.kind+item.code} onClick={()=>go("airports")}><div><b>{item.code}</b><span>{item.label || airports.find((a)=>a.icao===item.code)?.name || "Open Airport Explorer for details"}</span></div><span>→</span></button>)}
+        {!savedAirports.length && <div className="empty">No saved airports yet.</div>}
+      </div></Card>
+      <Card><h3>Aircraft</h3><div className="list">
+        {savedAircraft.map((item:FavoriteItem)=><button className="row button-row" key={item.kind+item.code} onClick={()=>go("aircraft")}><div><b>{item.code}</b><span>{item.label || aircraft.find((a)=>a.icao===item.code)?.name || "Open Aircraft Library for details"}</span></div><span>→</span></button>)}
+        {!savedAircraft.length && <div className="empty">No saved aircraft types yet.</div>}
+      </div></Card>
+    </div>
+  </>;
 }
 
 function Settings({ profile,setProfile }:any) {
