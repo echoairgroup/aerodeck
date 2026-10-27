@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 
-export const revalidate = 60;
-
 export async function GET() {
   try {
     const response = await fetch("https://my.vatsim.net/api/v2/events/latest", {
