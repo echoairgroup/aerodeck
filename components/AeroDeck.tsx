@@ -290,16 +290,9 @@ export default function AeroDeck({ initialSection = "dashboard" }: { initialSect
   const searchResults = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return [];
-    const a = airports
-      .filter((x) => (x.icao + " " + x.iata + " " + x.name + " " + x.city).toLowerCase().includes(q))
-      .map((x) => ({ type: "Airport", title: x.icao + " · " + x.name, meta: x.city }));
-    const ac = aircraft
-      .filter((x) => (x.icao + " " + x.name + " " + x.family).toLowerCase().includes(q))
-      .map((x) => ({ type: "Aircraft", title: x.icao + " · " + x.name, meta: x.family }));
-    const k = terms
+    return terms
       .filter((x) => (x[0] + " " + x[1]).toLowerCase().includes(q))
       .map((x) => ({ type: "Knowledge", title: x[0], meta: x[1] }));
-    return [...a, ...ac, ...k].slice(0, 12);
   }, [search]);
 
   useEffect(() => {
@@ -619,19 +612,21 @@ function SimBrief({ notify, setFlights, go }: any) {
 
 function Airports({ favorites, setFavorites, notes, setNotes }: any) {
   const [q,setQ] = useState("");
-  const [sel,setSel] = useState<any>(airports[0]);
-  const [items,setItems] = useState<any[]>(airports);
+  const [sel,setSel] = useState<any>(null);
+  const [items,setItems] = useState<any[]>([]);
   const [loading,setLoading] = useState(false);
   const [searchError,setSearchError] = useState("");
 
   useEffect(() => {
     const term = q.trim();
     if (term.length < 2) {
-      setItems(airports.filter((x) => (x.icao+" "+x.iata+" "+x.name+" "+x.city).toLowerCase().includes(term.toLowerCase())));
+      setItems([]);
+      setSel(null);
       setSearchError("");
       setLoading(false);
       return;
     }
+
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setLoading(true);
@@ -642,10 +637,12 @@ function Airports({ favorites, setFavorites, notes, setNotes }: any) {
         if (!response.ok) throw new Error(body.error || "Airport search is temporarily unavailable.");
         const results = Array.isArray(body.items) ? body.items : [];
         setItems(results);
+        setSel(null);
       } catch (error:any) {
         if (!controller.signal.aborted) {
-          setSearchError(error.message || "Airport search is temporarily unavailable. Showing the local reference list.");
-          setItems(airports.filter((x) => (x.icao+" "+x.iata+" "+x.name+" "+x.city).toLowerCase().includes(term.toLowerCase())));
+          setSearchError(error.message || "Airport search is temporarily unavailable.");
+          setItems([]);
+          setSel(null);
         }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
@@ -661,18 +658,20 @@ function Airports({ favorites, setFavorites, notes, setNotes }: any) {
       ? current.filter((item) => !(item.kind === "airport" && item.code === sel.icao))
       : [...current, { kind: "airport", code: sel.icao, label: sel.name }]);
   };
+
   return <>
     <Header eyebrow="AIRPORTS" title="Airport Explorer" desc="Search airport identifiers, names, cities and IATA codes using the public OurAirports dataset. Runway details are shown only when available."/>
     <div className="grid-2">
       <Card>
         <Field label="Search worldwide airports" value={q} onChange={setQ} placeholder="ICAO, IATA, airport, city…"/>
         {loading && <p className="muted">Searching airport records…</p>}
-        {searchError && <div className="notice">{searchError}</div>}
+        {searchError && <div className="error">{searchError}</div>}
         <div className="list scroll">
           {items.map((a:any,index:number)=><button className={"row button-row "+(a.icao===sel?.icao?"selected":"")} key={a.icao || a.iata || a.name+index} onClick={()=>setSel(a)}>
             <div><b>{a.icao || a.iata || a.ident || "No ICAO code"}{a.iata ? " · "+a.iata : ""}</b><span>{a.name}</span></div><small>{a.city || a.country || a.type || ""}</small>
           </button>)}
-          {!loading && !items.length && <div className="empty">No matching airports found in the returned dataset.</div>}
+          {!loading && !items.length && !searchError && <div className="empty">{q.trim().length < 2 ? "Search by at least two characters to load real airport records." : "No matching airports found in the returned dataset."}</div>}
+          {!loading && !items.length && searchError && <div className="empty">Airport details are unavailable because the source did not respond.</div>}
         </div>
       </Card>
       {sel && <Card>
@@ -683,7 +682,7 @@ function Airports({ favorites, setFavorites, notes, setNotes }: any) {
         <h4>Runways</h4>
         {sel.runways?.length ? <div className="chips">{sel.runways.map((r:string)=><span key={r}>{r}</span>)}</div> : <p className="muted">Runway details are not included in the current airport lookup result.</p>}
         <label className="field"><span>Personal note</span><textarea value={notes[sel.icao || sel.ident] || ""} onChange={(e)=>setNotes({...notes,[sel.icao || sel.ident]:e.target.value})} placeholder="Your airport notes…"/></label>
-        <p className="muted">Airport lookup source: {sel.source || "AeroDeck curated reference"}.</p>
+        <p className="muted">Airport lookup source: {sel.source || "OurAirports"}.</p>
       </Card>}
     </div>
   </>;
