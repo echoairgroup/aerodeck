@@ -1,6 +1,12 @@
 'use client';
 
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+
+const RouteLeaflet = dynamic(() => import("./RouteLeaflet").then((module) => module.RouteLeaflet), {
+  ssr: false,
+  loading: () => <div className="notice">Loading route map…</div>,
+});
 
 type FavoriteItem = { kind: "airport" | "aircraft"; code: string; label?: string };
 
@@ -94,28 +100,10 @@ function routeCoordinates(data: any) {
 
 function RouteMap({ data, sourceName = "SimBrief" }: { data: any; sourceName?: string }) {
   const points = routeCoordinates(data);
-  if (points.length < 3) return <div className="notice">{sourceName} did not supply a complete set of route-waypoint coordinates. AeroDeck does not draw a guessed straight-line path.</div>;
-  const minLon = Math.min(...points.map((point) => point.lon));
-  const maxLon = Math.max(...points.map((point) => point.lon));
-  const minLat = Math.min(...points.map((point) => point.lat));
-  const maxLat = Math.max(...points.map((point) => point.lat));
-  const project = (point: { lon: number; lat: number }) => ({
-    x: 32 + ((point.lon - minLon) / (maxLon - minLon || 1)) * 636,
-    y: 18 + (1 - (point.lat - minLat) / (maxLat - minLat || 1)) * 184
-  });
-  const projected = points.map(project);
-  return <div className="route-map">
-    <svg viewBox="0 0 700 220" role="img" aria-label={"Route based on coordinates supplied by " + sourceName}>
-      <defs><pattern id="route-grid" width="35" height="35" patternUnits="userSpaceOnUse"><path d="M 35 0 L 0 0 0 35" fill="none" stroke="currentColor" strokeOpacity=".12" strokeWidth="1"/></pattern></defs>
-      <rect x="0" y="0" width="700" height="220" fill="url(#route-grid)" rx="10"/>
-      <polyline points={projected.map((point) => point.x + "," + point.y).join(" ")} fill="none" stroke="#1686ba" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-      {projected.map((point, index) => <g key={points[index].label + "-" + index}>
-        <circle cx={point.x} cy={point.y} r={index === 0 || index === projected.length - 1 ? 5 : 2.5} fill={index === 0 || index === projected.length - 1 ? "#0d8873" : "#1686ba"} stroke="white" strokeWidth="1.5"/>
-        {(index === 0 || index === projected.length - 1) && <text x={point.x + (index === 0 ? 9 : -9)} y={point.y - 9} textAnchor={index === 0 ? "start" : "end"} fill="currentColor" fontSize="11" fontWeight="700">{points[index].label}</text>}
-      </g>)}
-    </svg>
-    <div className="route-map-caption">{points.length} route points · coordinates supplied by {sourceName}</div>
-  </div>;
+  if (points.length < 3) {
+    return <div className="notice">{sourceName} did not supply enough route waypoints with coordinates. AeroDeck will not invent a route.</div>;
+  }
+  return <RouteLeaflet points={points} sourceName={sourceName} />;
 }
 
 const nav = [
