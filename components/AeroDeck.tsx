@@ -650,6 +650,17 @@ function Aircraft({ favorites, setFavorites, notes, setNotes }: any) {
   </>;
 }
 
+function pickRecordValue(record: any, paths: string[]): string {
+  for (const path of paths) {
+    const value = path.split(".").reduce((current: any, key) => current?.[key], record);
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      if (typeof value === "object") return displayValue(value.icao, value.name, value.callsign, value.code, value.id);
+      return String(value);
+    }
+  }
+  return "—";
+}
+
 function NewSky() {
   const [view, setView] = useState<"ongoing" | "recent">("ongoing");
   const [result, setResult] = useState<any>(null);
