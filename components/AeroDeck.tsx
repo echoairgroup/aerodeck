@@ -12,14 +12,93 @@ type Flight = {
   landing: string;
   date: string;
   notes: string;
+  route?: string;
+  source?: "manual" | "simbrief" | "newsky";
+  flightNumber?: string;
+  cruiseAltitude?: string;
+  blockFuel?: string;
+  ofpJson?: unknown;
 };
 
-const DEFAULT_PROFILE = { name: "Christian", callsign: "ECV412", home: "EDDL", sim: "MSFS 2024" };
+const DEFAULT_PROFILE = { name: "Christian", callsign: "", home: "", sim: "MSFS 2024" };
+
+function cleanProfile(value: any) {
+  const profile = { ...DEFAULT_PROFILE, ...(value && typeof value === "object" && !Array.isArray(value) ? value : {}) };
+  if (profile.callsign === "ECV412") profile.callsign = "";
+  return profile;
+}
+
+function cleanFlights(value: any): Flight[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((flight) => flight && typeof flight === "object" && flight.id !== "seed");
+}
+
+function cleanFavorites(value: any): string[] {
+  if (!Array.isArray(value)) return [];
+  const legacyDefaults = ["EHAM", "EDDL", "LGSM", "A21N"];
+  if (value.length === legacyDefaults.length && legacyDefaults.every((item, index) => value[index] === item)) return [];
+  return value.filter((item) => typeof item === "string");
+}
+
+function displayValue(...values: any[]): string {
+  const value = values.find((candidate) => candidate !== undefined && candidate !== null && String(candidate).trim() !== "");
+  return value === undefined ? "—" : String(value);
+}
+
+function navlogEntries(data: any): any[] {
+  const raw = data?.navlog?.fix ?? data?.navlog?.fixes ?? data?.navlog;
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === "object") return Object.values(raw).filter((item: any) => item && typeof item === "object");
+  return [];
+}
+
+function routeCoordinates(data: any) {
+  const coordinate = (item: any, label: string) => {
+    if (!item) return null;
+    const lat = Number(item.pos_lat ?? item.lat ?? item.pos?.lat ?? item.position?.lat);
+    const lon = Number(item.pos_long ?? item.lon ?? item.long ?? item.pos?.lon ?? item.pos?.long ?? item.position?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    return { label, lat, lon };
+  };
+  const fixes = navlogEntries(data).map((item: any, index: number) =>
+    coordinate(item, displayValue(item.ident, item.name, item.fix, "Waypoint " + (index + 1)))
+  ).filter(Boolean);
+  const origin = coordinate(data?.origin?.pos ?? data?.origin, displayValue(data?.origin?.icao, data?.params?.orig, "Origin"));
+  const destination = coordinate(data?.destination?.pos ?? data?.destination, displayValue(data?.destination?.icao, data?.params?.dest, "Destination"));
+  return [origin, ...fixes, destination].filter(Boolean) as { label: string; lat: number; lon: number }[];
+}
+
+function RouteMap({ data }: { data: any }) {
+  const points = routeCoordinates(data);
+  if (points.length < 2) return <div className="notice">SimBrief did not supply enough waypoint coordinates for a map on this OFP. No route is guessed.</div>;
+  const minLon = Math.min(...points.map((point) => point.lon));
+  const maxLon = Math.max(...points.map((point) => point.lon));
+  const minLat = Math.min(...points.map((point) => point.lat));
+  const maxLat = Math.max(...points.map((point) => point.lat));
+  const project = (point: { lon: number; lat: number }) => ({
+    x: 32 + ((point.lon - minLon) / (maxLon - minLon || 1)) * 636,
+    y: 18 + (1 - (point.lat - minLat) / (maxLat - minLat || 1)) * 184
+  });
+  const projected = points.map(project);
+  return <div className="route-map">
+    <svg viewBox="0 0 700 220" role="img" aria-label="Route based on coordinates from the imported SimBrief OFP">
+      <defs><pattern id="route-grid" width="35" height="35" patternUnits="userSpaceOnUse"><path d="M 35 0 L 0 0 0 35" fill="none" stroke="currentColor" strokeOpacity=".12" strokeWidth="1"/></pattern></defs>
+      <rect x="0" y="0" width="700" height="220" fill="url(#route-grid)" rx="10"/>
+      <polyline points={projected.map((point) => point.x + "," + point.y).join(" ")} fill="none" stroke="#1686ba" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+      {projected.map((point, index) => <g key={points[index].label + "-" + index}>
+        <circle cx={point.x} cy={point.y} r={index === 0 || index === projected.length - 1 ? 5 : 2.5} fill={index === 0 || index === projected.length - 1 ? "#0d8873" : "#1686ba"} stroke="white" strokeWidth="1.5"/>
+        {(index === 0 || index === projected.length - 1) && <text x={point.x + (index === 0 ? 9 : -9)} y={point.y - 9} textAnchor={index === 0 ? "start" : "end"} fill="currentColor" fontSize="11" fontWeight="700">{points[index].label}</text>}
+      </g>)}
+    </svg>
+    <div className="route-map-caption">{points.length} route points · coordinates supplied by SimBrief</div>
+  </div>;
+}
 
 const nav = [
   ["dashboard", "Dashboard", "⌂"],
   ["flight", "Flight Center", "✈"],
   ["simbrief", "SimBrief", "▣"],
+  ["newsky", "NewSky", "↗"],
   ["airports", "Airports", "⌖"],
   ["aircraft", "Aircraft", "◫"],
   ["weather", "Weather", "◌"],
@@ -71,27 +150,15 @@ const lessons = [
   ["Top of Descent", "Plan descent using altitude constraints and groundspeed."],
 ];
 
-function defaultFlights(): Flight[] {
-  return [{
-    id: "seed",
-    callsign: "ECV412",
-    aircraft: "A21N",
-    from: "EDDL",
-    to: "LGSM",
-    duration: "02:48",
-    landing: "-142 fpm",
-    date: "2026-10-25",
-    notes: "Greek Islands Discovery",
-  }];
-}
+function defaultFlights(): Flight[] { return []; }
 
-export default function AeroDeck() {
-  const [section, setSection] = useState("dashboard");
+export default function AeroDeck({ initialSection = "dashboard" }: { initialSection?: string } = {}) {
+  const [section, setSection] = useState(initialSection);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [flights, setFlights] = useState<Flight[]>(defaultFlights());
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
-  const [favorites, setFavorites] = useState<string[]>(["EHAM", "EDDL", "LGSM", "A21N"]);
+  const [favorites, setFavorites] = useState<string[]>([]);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [toast, setToast] = useState("");
   const [db, setDb] = useState("checking");
@@ -102,11 +169,11 @@ export default function AeroDeck() {
       const raw = localStorage.getItem("aerodeck-state");
       if (raw) {
         const state = JSON.parse(raw);
-        if (Array.isArray(state.flights)) setFlights(state.flights);
+        if (Array.isArray(state.flights)) setFlights(cleanFlights(state.flights));
         if (state.profile && typeof state.profile === "object" && !Array.isArray(state.profile)) {
-          setProfile({ ...DEFAULT_PROFILE, ...state.profile });
+          setProfile(cleanProfile(state.profile));
         }
-        if (Array.isArray(state.favorites)) setFavorites(state.favorites);
+        if (Array.isArray(state.favorites)) setFavorites(cleanFavorites(state.favorites));
         if (state.notes) setNotes(state.notes);
       }
     } catch {}
@@ -115,23 +182,23 @@ export default function AeroDeck() {
       if (!r.ok) throw new Error("cloud unavailable");
       const state = await r.json();
       try {
-        const cloudProfile = JSON.parse(state.profileJson || "{}");
-        const cloudFlights = JSON.parse(state.flightsJson || "[]");
-        const cloudFavorites = JSON.parse(state.favoritesJson || "[]");
+        const rawProfile = JSON.parse(state.profileJson || "{}");
+        const rawFlights = JSON.parse(state.flightsJson || "[]");
+        const rawFavorites = JSON.parse(state.favoritesJson || "[]");
+        const cloudProfile = cleanProfile(rawProfile);
+        const cloudFlights = cleanFlights(rawFlights);
+        const cloudFavorites = cleanFavorites(rawFavorites);
         const cloudNotes = JSON.parse(state.notesJson || "{}");
         const isUninitialized =
-          cloudProfile && typeof cloudProfile === "object" && !Array.isArray(cloudProfile) && Object.keys(cloudProfile).length === 0 &&
-          Array.isArray(cloudFlights) && cloudFlights.length === 0 &&
-          Array.isArray(cloudFavorites) && cloudFavorites.length === 0 &&
+          rawProfile && typeof rawProfile === "object" && !Array.isArray(rawProfile) && Object.keys(rawProfile).length === 0 &&
+          cloudFlights.length === 0 && cloudFavorites.length === 0 &&
           cloudNotes && typeof cloudNotes === "object" && !Array.isArray(cloudNotes) && Object.keys(cloudNotes).length === 0;
 
-        // A freshly-created cloud row is empty. Do not let it erase the local/default startup state.
+        // Empty cloud rows do not wipe local data. Legacy demo values are scrubbed before sync.
         if (!isUninitialized) {
-          if (cloudProfile && typeof cloudProfile === "object" && !Array.isArray(cloudProfile)) {
-            setProfile({ ...DEFAULT_PROFILE, ...cloudProfile });
-          }
-          if (Array.isArray(cloudFlights)) setFlights(cloudFlights);
-          if (Array.isArray(cloudFavorites)) setFavorites(cloudFavorites);
+          setProfile(cloudProfile);
+          setFlights(cloudFlights);
+          setFavorites(cloudFavorites);
           if (cloudNotes && typeof cloudNotes === "object" && !Array.isArray(cloudNotes)) setNotes(cloudNotes);
         }
         setDb("online");
@@ -222,7 +289,7 @@ export default function AeroDeck() {
           <div className="top-right">
             <button className="search-trigger" onClick={() => setSearchOpen(true)}>⌕ <span>Search anything…</span><kbd>Ctrl K</kbd></button>
             <button className="round-button" onClick={() => go("settings")}>⚙</button>
-            <button className="profile" onClick={() => go("settings")}><span>{(typeof profile.name === "string" && profile.name ? profile.name : "C").slice(0, 1).toUpperCase()}</span><b>{typeof profile.name === "string" && profile.name ? profile.name : DEFAULT_PROFILE.name}<small>{profile.callsign || DEFAULT_PROFILE.callsign}</small></b></button>
+            <button className="profile" onClick={() => go("settings")}><span>{(profile.name || "P").slice(0, 1).toUpperCase()}</span><b>{profile.name || "Pilot profile"}<small>{profile.callsign || "Callsign not set"}</small></b></button>
           </div>
         </header>
 
@@ -261,6 +328,7 @@ export default function AeroDeck() {
 function Router(props: any) {
   if (props.section === "flight") return <FlightCenter {...props} />;
   if (props.section === "simbrief") return <SimBrief {...props} />;
+  if (props.section === "newsky") return <NewSky />;
   if (props.section === "airports") return <Airports {...props} />;
   if (props.section === "aircraft") return <Aircraft {...props} />;
   if (props.section === "weather") return <Weather />;
@@ -290,64 +358,158 @@ function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "li
   return <span className={"badge " + tone}>{children}</span>;
 }
 
-function Dashboard({ flights, profile, go }: any) {
+function Dashboard({ flights, profile, favorites, go }: any) {
   const [network, setNetwork] = useState<any>(null);
   const [weather, setWeather] = useState<any[]>([]);
-  const f = flights[0] ?? {
-    from: "—", to: "—", callsign: profile.callsign || "—", aircraft: "—", duration: "—",
-    notes: "No flight planned", landing: "—",
-  };
+  const f = flights[0];
   useEffect(() => {
-    fetch("/api/vatsim").then((r) => r.json()).then(setNetwork).catch(() => {});
-    fetch("/api/metar?icao=EDDL,EHAM,LGSM").then((r) => r.json()).then((d) => setWeather(d.items || [])).catch(() => {});
+    fetch("/api/vatsim").then((r) => r.ok ? r.json() : Promise.reject()).then(setNetwork).catch(() => {});
+    fetch("/api/metar?icao=EDDL,EHAM,LGSM").then((r) => r.ok ? r.json() : Promise.reject()).then((d) => setWeather(d.items || [])).catch(() => {});
   }, []);
   return <>
-    <Header eyebrow="FLIGHT SIMULATION COMMAND CENTER" title={"Welcome back, " + profile.name} desc="Your flight planning, weather, network, training and logbook workspace." action={<div className="actions"><button className="btn" onClick={() => go("flight")}>+ New flight</button><button className="btn primary" onClick={() => go("simbrief")}>Import SimBrief</button></div>} />
+    <Header eyebrow="FLIGHT WORKSPACE" title={profile.name ? "Welcome back, " + profile.name : "Your flight workspace"} desc="Your saved plans, live network data and weather—without demo flights or invented flight stats." action={<div className="actions"><button className="btn" onClick={() => go("flight")}>Plan a flight</button><button className="btn primary" onClick={() => go("simbrief")}>Import an OFP</button></div>} />
     <div className="hero-grid">
-      <Card className="hero-card">
-        <div className="card-head"><div><small>ACTIVE / NEXT FLIGHT</small><h2>{f.from} <span>→</span> {f.to}</h2><p>{f.callsign} · {f.aircraft} · {f.duration} · {f.notes}</p></div><Badge tone="live">READY</Badge></div>
-        <div className="route-strip"><div><b>{f.from}</b><span>DEPARTURE</span></div><i>✈</i><div><b>{f.to}</b><span>DESTINATION</span></div></div>
-        <div className="stat-grid four"><Stat label="Aircraft" value={f.aircraft}/><Stat label="Network" value="VATSIM" accent/><Stat label="Cruise" value="FL350"/><Stat label="Landing" value={f.landing}/></div>
-        <div className="actions"><button className="btn" onClick={() => go("flight")}>Open flight</button><button className="btn ghost" onClick={() => go("calculators")}>Flight tools</button></div>
+      {f ? <Card className="hero-card">
+        <div className="card-head"><div><small>{f.source === "simbrief" ? "LATEST IMPORTED OFP" : "SAVED FLIGHT"}</small><h2>{f.from || "—"} <span>→</span> {f.to || "—"}</h2><p>{[f.callsign, f.aircraft, f.duration, f.notes].filter(Boolean).join(" · ") || "Flight details not provided"}</p></div><Badge tone="accent">{f.source === "simbrief" ? "SIMBRIEF" : f.source === "newsky" ? "NEWSKY" : "SAVED"}</Badge></div>
+        <div className="route-strip"><div><b>{f.from || "—"}</b><span>DEPARTURE</span></div><i>✈</i><div><b>{f.to || "—"}</b><span>DESTINATION</span></div></div>
+        <div className="stat-grid four"><Stat label="Aircraft" value={f.aircraft || "—"}/><Stat label="Callsign" value={f.callsign || "—"}/><Stat label="Cruise altitude" value={f.cruiseAltitude || "—"}/><Stat label="Block fuel" value={f.blockFuel || "—"}/></div>
+        {f.route && <p className="route-summary">{f.route}</p>}
+        <div className="actions"><button className="btn" onClick={() => go("flight")}>Open Flight Center</button><button className="btn ghost" onClick={() => go("logbook")}>Open Logbook</button></div>
+      </Card> : <Card className="hero-card empty-flight">
+        <div className="empty-icon">✈</div><small>YOUR FLIGHT PLAN</small><h2>No flight saved yet</h2><p>Import a real SimBrief OFP or create your own plan. AeroDeck no longer preloads a fictional flight.</p>
+        <div className="actions"><button className="btn primary" onClick={() => go("simbrief")}>Import from SimBrief</button><button className="btn" onClick={() => go("flight")}>Create flight</button></div>
+      </Card>}
+      <Card className="network-card">
+        <div className="card-head"><div><small>VATSIM NETWORK</small><h3>Live network</h3></div><Badge tone={network ? "live" : "neutral"}>{network ? "LIVE" : "CONNECTING"}</Badge></div>
+        <div className="big-number">{network?.general?.connected_clients?.toLocaleString() ?? "—"}</div><p>Connected clients</p>
+        <div className="mini-stats"><span><b>{network?.pilots?.length?.toLocaleString() ?? "—"}</b>Pilots</span><span><b>{network?.controllers?.length?.toLocaleString() ?? "—"}</b>Controllers</span></div>
+        <button className="btn full" onClick={() => go("vatsim")}>Explore VATSIM</button>
       </Card>
-      <Card><small>VATSIM NETWORK</small><div className="big-number">{network?.general?.connected_clients?.toLocaleString() || "—"}</div><p>Connected clients</p><div className="mini-stats"><span><b>{network?.pilots?.length || "—"}</b>Pilots</span><span><b>{network?.controllers?.length || "—"}</b>Controllers</span></div><button className="btn full" onClick={() => go("vatsim")}>Open live network</button></Card>
     </div>
-    <div className="stat-grid four"><Stat label="Flights logged" value={flights.length}/><Stat label="Approx. hours" value={hours(flights)}/><Stat label="Favorite airports" value="3"/><Stat label="Training progress" value="42%" accent/></div>
+    <div className="stat-grid four"><Stat label="Saved flights" value={flights.length}/><Stat label="Saved favourites" value={favorites.length}/><Stat label="Home airport" value={profile.home || "—"}/><Stat label="Simulator" value={profile.sim || "—"}/></div>
     <div className="grid-3">
-      <Card><div className="card-head"><div><small>QUICK ACTIONS</small><h3>Flight tools</h3></div></div><div className="quick-actions">{[["Flight Center","flight","✈"],["Weather","weather","◌"],["VATSIM","vatsim","◎"],["Calculators","calculators","∑"],["Logbook","logbook","▤"],["Training","training","◆"]].map((x) => <button key={x[1]} onClick={() => go(x[1])}><i>{x[2]}</i><b>{x[0]}</b></button>)}</div></Card>
-      <Card><div className="card-head"><div><small>FAVORITE WEATHER</small><h3>Current reports</h3></div><button className="link" onClick={() => go("weather")}>Open</button></div><div className="list">{weather.slice(0,3).map((m:any) => <div className="row" key={m.id}><div><b>{m.id}</b><span>{m.metar || "No report"}</span></div><Badge tone="live">LIVE</Badge></div>)}</div></Card>
-      <Card><div className="card-head"><div><small>TRAINING</small><h3>Continue learning</h3></div><button className="link" onClick={() => go("training")}>View all</button></div><div className="lesson"><b>METAR Basics</b><span>2 / 5 lessons</span></div><div className="progress"><i style={{width:"42%"}} /></div><button className="btn full" onClick={() => go("training")}>Continue lesson</button></Card>
+      <Card><div className="card-head"><div><small>QUICK ACCESS</small><h3>Flight tools</h3></div></div><div className="quick-actions">{[["Flight Center","flight","✈"],["Weather","weather","◌"],["VATSIM","vatsim","◎"],["NewSky","newsky","↗"],["Logbook","logbook","▤"],["Training","training","◆"]].map((x) => <button key={x[1]} onClick={() => go(x[1])}><i>{x[2]}</i><b>{x[0]}</b></button>)}</div></Card>
+      <Card><div className="card-head"><div><small>LIVE WEATHER</small><h3>Latest METAR reports</h3></div><button className="link" onClick={() => go("weather")}>Open</button></div><div className="list">{weather.slice(0,3).map((m:any) => <div className="row" key={m.id}><div><b>{m.id}</b><span>{m.metar || "No report supplied"}</span></div><Badge tone="live">LIVE</Badge></div>)}{!weather.length && <p className="muted">Live METAR data has not loaded yet.</p>}</div></Card>
+      <Card><div className="card-head"><div><small>TRAINING LIBRARY</small><h3>Practice and reference</h3></div><button className="link" onClick={() => go("training")}>Open</button></div><p>Flight planning, METAR interpretation, ILS approaches, VATSIM radio and top-of-descent planning.</p><button className="btn full" onClick={() => go("training")}>Browse training</button></Card>
     </div>
   </>;
 }
 
 function FlightCenter({ flights, setFlights, go, notify }: any) {
-  const [f, setF] = useState({ callsign:"ECV412", aircraft:"A21N", from:"EDDL", to:"LGSM", duration:"02:48", landing:"", date:new Date().toISOString().slice(0,10), notes:"" });
+  const [f, setF] = useState({ callsign:"", aircraft:"", from:"", to:"", duration:"", landing:"", date:new Date().toISOString().slice(0,10), notes:"" });
   const add = () => {
-    if (!f.callsign || !f.from || !f.to) return notify("Fill callsign, departure and destination");
-    setFlights([{ id: crypto.randomUUID(), ...f }, ...flights]);
+    const from = f.from.trim().toUpperCase();
+    const to = f.to.trim().toUpperCase();
+    if (!/^[A-Z]{4}$/.test(from) || !/^[A-Z]{4}$/.test(to)) return notify("Enter valid four-letter ICAO departure and destination codes.");
+    const flight: Flight = { id: crypto.randomUUID(), ...f, callsign:f.callsign.trim(), aircraft:f.aircraft.trim().toUpperCase(), from, to, source:"manual" };
+    setFlights((current: Flight[]) => [flight, ...current]);
     notify("Flight saved");
     go("logbook");
   };
-  return <><Header eyebrow="FLIGHT CENTER" title="Build your next flight" desc="Create a flight manually or import a SimBrief operational flight plan." action={<button className="btn primary" onClick={() => go("simbrief")}>Import SimBrief OFP</button>} /><div className="grid-2"><Card><div className="card-head"><div><small>NEW FLIGHT</small><h3>Flight setup</h3></div></div><div className="form-grid two"><Field label="Callsign" value={f.callsign} onChange={(v)=>setF({...f,callsign:v})}/><Field label="Aircraft" value={f.aircraft} onChange={(v)=>setF({...f,aircraft:v.toUpperCase()})}/><Field label="Departure" value={f.from} onChange={(v)=>setF({...f,from:v.toUpperCase()})}/><Field label="Destination" value={f.to} onChange={(v)=>setF({...f,to:v.toUpperCase()})}/><Field label="Flight time" value={f.duration} onChange={(v)=>setF({...f,duration:v})} placeholder="02:35"/><Field label="Landing rate" value={f.landing} onChange={(v)=>setF({...f,landing:v})} placeholder="-120 fpm"/></div><label className="field"><span>Notes</span><textarea value={f.notes} onChange={(e)=>setF({...f,notes:e.target.value})} placeholder="Trip, event, route notes…"/></label><button className="btn primary full" onClick={add}>Save flight</button></Card><Card><small>RECENT FLIGHTS</small><h3>Planning history</h3><div className="list">{flights.slice(0,8).map((x:Flight)=><div className="row" key={x.id}><div><b>{x.callsign}</b><span>{x.from} → {x.to} · {x.aircraft}</span></div><span className="muted">{x.duration}</span></div>)}</div></Card></div></>;
+  return <>
+    <Header eyebrow="FLIGHT CENTER" title="Flight planning" desc="Build a plan from your own details or import a real SimBrief operational flight plan." action={<button className="btn primary" onClick={() => go("simbrief")}>Import SimBrief OFP</button>} />
+    <div className="grid-2">
+      <Card><div className="card-head"><div><small>NEW FLIGHT</small><h3>Flight details</h3></div></div>
+        <div className="form-grid two"><Field label="Callsign (optional)" value={f.callsign} onChange={(v)=>setF({...f,callsign:v.toUpperCase()})} placeholder="Set your actual callsign"/><Field label="Aircraft ICAO" value={f.aircraft} onChange={(v)=>setF({...f,aircraft:v.toUpperCase()})} placeholder="e.g. A20N"/><Field label="Departure ICAO" value={f.from} onChange={(v)=>setF({...f,from:v.toUpperCase()})} placeholder="e.g. EHAM"/><Field label="Destination ICAO" value={f.to} onChange={(v)=>setF({...f,to:v.toUpperCase()})} placeholder="e.g. LGSM"/><Field label="Planned duration" value={f.duration} onChange={(v)=>setF({...f,duration:v})} placeholder="e.g. 02:35"/><Field label="Landing rate (fpm)" value={f.landing} onChange={(v)=>setF({...f,landing:v})} placeholder="Leave blank until flown"/></div>
+        <label className="field"><span>Notes</span><textarea value={f.notes} onChange={(e)=>setF({...f,notes:e.target.value})} placeholder="Only enter notes you want to keep."/></label>
+        <button className="btn primary full" onClick={add}>Save flight</button>
+      </Card>
+      <Card><small>YOUR SAVED FLIGHTS</small><h3>Planning history</h3><div className="list">{flights.slice(0,10).map((x:Flight)=><div className="row" key={x.id}><div><b>{x.from || "—"} → {x.to || "—"}</b><span>{[x.callsign, x.aircraft, x.source === "simbrief" ? "SimBrief OFP" : x.source === "newsky" ? "NewSky" : "Manual"].filter(Boolean).join(" · ")}</span></div><span className="muted">{x.duration || "—"}</span></div>)}{!flights.length && <div className="empty">No saved flights yet. Import an OFP or create your first plan.</div>}</div></Card>
+    </div>
+  </>;
 }
 
-function SimBrief({ notify }: any) {
+function SimBrief({ notify, setFlights, go }: any) {
   const [username, setUsername] = useState("");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
   const load = async () => {
-    if (!username.trim()) return setError("Enter your SimBrief / Navigraph identifier.");
-    setLoading(true); setError("");
+    const identifier = username.trim();
+    if (!identifier) return setError("Enter your SimBrief username or Pilot ID.");
+    setLoading(true); setError(""); setData(null);
     try {
-      const r = await fetch("/api/simbrief?username=" + encodeURIComponent(username));
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || "Import failed");
-      setData(d); notify("Latest OFP imported");
-    } catch (e:any) { setError(e.message); } finally { setLoading(false); }
+      const key = /^\\d+$/.test(identifier) ? "userid" : "username";
+      const response = await fetch("/api/simbrief?" + key + "=" + encodeURIComponent(identifier), { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok || String(result?.fetch?.status || "").toLowerCase() === "error") throw new Error(result.error || result?.fetch?.message || "SimBrief did not return a usable OFP. Check the identifier and ensure a latest OFP exists.");
+      if (!result?.params && !result?.origin && !result?.general) throw new Error("The response did not contain recognizable OFP data.");
+      setData(result); notify("OFP loaded from SimBrief");
+    } catch (e:any) { setError(e.message || "Could not load the OFP."); } finally { setLoading(false); }
   };
-  return <><Header eyebrow="SIMBRIEF" title="Operational Flight Plan" desc="Import your latest OFP on demand and use it as the basis of your AeroDeck briefing."/><Card><div className="inline"><input value={username} onChange={(e)=>setUsername(e.target.value)} placeholder="SimBrief / Navigraph username or Pilot ID"/><button className="btn primary" onClick={load} disabled={loading}>{loading ? "Importing…" : "Import latest OFP"}</button></div>{error&&<div className="error">{error}</div>}</Card>{data&&<Card><div className="route-strip"><div><b>{data.origin?.icao || data.params?.orig || "----"}</b><span>ORIGIN</span></div><i>→</i><div><b>{data.destination?.icao || data.params?.dest || "----"}</b><span>DESTINATION</span></div></div><div className="stat-grid four"><Stat label="Aircraft" value={data.aircraft?.icaocode || data.params?.type || "—"}/><Stat label="Callsign" value={data.params?.flight || "—"}/><Stat label="Distance" value={data.params?.totaldist ? data.params.totaldist + " nm" : "—"}/><Stat label="Block fuel" value={data.params?.blockfuel ? data.params.blockfuel + " kg" : "—"}/></div><details><summary>Raw OFP data</summary><pre>{JSON.stringify(data,null,2).slice(0,16000)}</pre></details></Card>}</>;
+
+  const origin = displayValue(data?.origin?.icao, data?.params?.orig);
+  const destination = displayValue(data?.destination?.icao, data?.params?.dest);
+  const aircraftCode = displayValue(data?.aircraft?.icaocode, data?.params?.type);
+  const callsign = displayValue(data?.atc?.callsign, data?.params?.callsign, data?.params?.flight);
+  const route = displayValue(data?.atc?.route, data?.general?.route, data?.params?.route);
+  const navlog = navlogEntries(data);
+  const saveFlight = () => {
+    if (origin === "—" || destination === "—") return setError("This OFP does not include both departure and destination ICAO codes, so it cannot be saved as a flight yet.");
+    const duration = displayValue(data?.times?.est_time_enroute, data?.times?.sched_time_enroute, data?.params?.duration);
+    const cruise = displayValue(data?.general?.initial_altitude, data?.params?.cruisealt);
+    const blockFuel = displayValue(data?.fuel?.block, data?.fuel?.plan_ramp, data?.params?.blockfuel);
+    const flight: Flight = {
+      id: crypto.randomUUID(),
+      callsign: callsign === "—" ? "" : callsign,
+      aircraft: aircraftCode === "—" ? "" : aircraftCode,
+      from: origin,
+      to: destination,
+      duration: duration === "—" ? "" : duration,
+      landing: "",
+      date: displayValue(data?.params?.date, new Date().toISOString().slice(0,10)),
+      notes: "Imported from SimBrief",
+      source: "simbrief",
+      route: route === "—" ? "" : route,
+      flightNumber: displayValue(data?.params?.flight) === "—" ? "" : displayValue(data?.params?.flight),
+      cruiseAltitude: cruise === "—" ? "" : cruise,
+      blockFuel: blockFuel === "—" ? "" : blockFuel,
+      ofpJson: data
+    };
+    setFlights((current: Flight[]) => [flight, ...current]);
+    notify("OFP saved to AeroDeck");
+    go("flight");
+  };
+
+  return <>
+    <Header eyebrow="SIMBRIEF INTEGRATION" title="Operational flight plan" desc="Load the latest OFP from your own SimBrief account. Only values actually returned by SimBrief are shown." />
+    <Card><div className="inline"><input value={username} onChange={(e)=>setUsername(e.target.value)} placeholder="SimBrief username or numeric Pilot ID" onKeyDown={(e)=>e.key==="Enter"&&load()}/><button className="btn primary" onClick={load} disabled={loading}>{loading ? "Loading OFP…" : "Load latest OFP"}</button></div>{error&&<div className="error">{error}</div>}<p className="muted">AeroDeck does not generate a sample flight if SimBrief has no valid OFP.</p></Card>
+    {data && <>
+      <Card className="ofp-title"><div className="card-head"><div><small>IMPORTED OFP</small><h2>{origin} <span>→</span> {destination}</h2><p>{[callsign, aircraftCode, displayValue(data?.params?.date)].filter((v)=>v!=="—").join(" · ")}</p></div><Badge tone="live">SIMBRIEF DATA</Badge></div><button className="btn primary" onClick={saveFlight}>Save to AeroDeck flights</button></Card>
+      <div className="stat-grid four"><Stat label="Aircraft" value={aircraftCode}/><Stat label="Callsign / flight" value={callsign}/><Stat label="Route distance" value={displayValue(data?.general?.route_distance, data?.params?.totaldist)==="—" ? "—" : displayValue(data?.general?.route_distance, data?.params?.totaldist) + " nm"}/><Stat label="Estimated en route" value={displayValue(data?.times?.est_time_enroute, data?.params?.duration)}/></div>
+      <div className="grid-2">
+        <Card><div className="card-head"><div><small>ROUTE</small><h3>Flight path</h3></div></div><p className="route-text">{route}</p><RouteMap data={data}/></Card>
+        <Card><small>FLIGHT DETAILS</small><h3>Aircraft and dispatch</h3><div className="data-grid">
+          <div className="data-pair"><span>Registration</span><b>{displayValue(data?.aircraft?.reg)}</b></div>
+          <div className="data-pair"><span>Aircraft name</span><b>{displayValue(data?.aircraft?.name)}</b></div>
+          <div className="data-pair"><span>Flight number</span><b>{displayValue(data?.params?.flight)}</b></div>
+          <div className="data-pair"><span>Cruise altitude</span><b>{displayValue(data?.general?.initial_altitude, data?.params?.cruisealt)}</b></div>
+          <div className="data-pair"><span>Departure runway</span><b>{displayValue(data?.origin?.plan_rwy, data?.origin?.runway)}</b></div>
+          <div className="data-pair"><span>Arrival runway</span><b>{displayValue(data?.destination?.plan_rwy, data?.destination?.runway)}</b></div>
+          <div className="data-pair"><span>Generated</span><b>{displayValue(data?.params?.date, data?.params?.time_generated)}</b></div>
+          <div className="data-pair"><span>Alternate</span><b>{displayValue(data?.alternate?.icao, data?.params?.altn)}</b></div>
+        </div></Card>
+        <Card><small>TIMING</small><h3>Schedule and estimates</h3><div className="data-grid">
+          <div className="data-pair"><span>Scheduled off-block</span><b>{displayValue(data?.times?.sched_out)}</b></div>
+          <div className="data-pair"><span>Estimated take-off</span><b>{displayValue(data?.times?.sched_off)}</b></div>
+          <div className="data-pair"><span>Estimated landing</span><b>{displayValue(data?.times?.sched_on)}</b></div>
+          <div className="data-pair"><span>Scheduled in-block</span><b>{displayValue(data?.times?.sched_in)}</b></div>
+          <div className="data-pair"><span>En-route time</span><b>{displayValue(data?.times?.est_time_enroute)}</b></div>
+          <div className="data-pair"><span>Average wind</span><b>{displayValue(data?.times?.avg_wind_dir)} / {displayValue(data?.times?.avg_wind_spd)} kt</b></div>
+        </div></Card>
+        <Card><small>FUEL</small><h3>Fuel plan</h3><div className="data-grid">
+          {[["Taxi",data?.fuel?.taxi],["Trip burn",data?.fuel?.enroute_burn],["Contingency",data?.fuel?.contingency],["Alternate",data?.fuel?.alternate_burn],["Reserve",data?.fuel?.reserve],["Minimum take-off",data?.fuel?.min_takeoff],["Planned take-off",data?.fuel?.plan_takeoff],["Planned landing",data?.fuel?.plan_landing],["Ramp / block",data?.fuel?.plan_ramp ?? data?.fuel?.block]].map(([label,value]:any)=><div className="data-pair" key={label}><span>{label}</span><b>{value === undefined || value === null || value === "" ? "—" : String(value) + " kg"}</b></div>)}
+        </div></Card>
+        <Card><small>WEIGHTS</small><h3>Aircraft weights</h3><div className="data-grid">
+          {[["Operating empty",data?.weights?.oew],["Payload",data?.weights?.payload],["Zero-fuel weight",data?.weights?.zfw],["Max zero-fuel weight",data?.weights?.mzfw],["Take-off weight",data?.weights?.tow],["Maximum take-off weight",data?.weights?.mtow],["Estimated landing weight",data?.weights?.est_ldw ?? data?.weights?.ldw],["Maximum landing weight",data?.weights?.mlw]].map(([label,value]:any)=><div className="data-pair" key={label}><span>{label}</span><b>{value === undefined || value === null || value === "" ? "—" : String(value) + " kg"}</b></div>)}
+        </div></Card>
+        <Card><small>AIRPORT WEATHER</small><h3>OFP weather reports</h3><div className="airport-metar"><b>{origin}</b><pre>{displayValue(data?.origin?.metar)}</pre></div><div className="airport-metar"><b>{destination}</b><pre>{displayValue(data?.destination?.metar)}</pre></div></Card>
+      </div>
+      <Card><div className="card-head"><div><small>NAVLOG</small><h3>Waypoint-by-waypoint route</h3></div><Badge tone="neutral">{navlog.length} points supplied</Badge></div>{navlog.length ? <div className="table-wrap"><table><thead><tr><th>Fix</th><th>Airway</th><th>Altitude</th><th>Leg distance</th><th>Leg time</th><th>Fuel remaining</th></tr></thead><tbody>{navlog.map((fix:any,index:number)=><tr key={String(fix.ident||fix.name||index)+index}><td>{displayValue(fix.ident,fix.name,fix.fix)}</td><td>{displayValue(fix.via_airway,fix.airway,fix.via)}</td><td>{displayValue(fix.altitude,fix.altitude_feet,fix.alt)}{displayValue(fix.altitude,fix.altitude_feet,fix.alt)!=="—"?" ft":""}</td><td>{displayValue(fix.distance,fix.dist,fix.leg_dist)}{displayValue(fix.distance,fix.dist,fix.leg_dist)!=="—"?" nm":""}</td><td>{displayValue(fix.time_leg,fix.leg_time,fix.ete)}</td><td>{displayValue(fix.fuel_remain,fix.fuel_remaining)}</td></tr>)}</tbody></table></div> : <p className="muted">This OFP response did not include a waypoint list.</p>}</Card>
+      <details><summary>Raw OFP response (diagnostics)</summary><pre>{JSON.stringify(data,null,2).slice(0,30000)}</pre></details>
+    </>}
+  </>;
 }
 
 function Airports({ favorites, setFavorites, notes, setNotes }: any) {
@@ -357,11 +519,81 @@ function Airports({ favorites, setFavorites, notes, setNotes }: any) {
   return <><Header eyebrow="AIRPORTS" title="Airport Explorer" desc="Start with a useful curated dataset; live/expanded providers can be added without changing the interface."/><div className="grid-2"><Card><Field label="Search" value={q} onChange={setQ} placeholder="ICAO, IATA, city…"/><div className="list scroll">{list.map((a)=><button className={"row button-row "+(a.icao===sel.icao?"selected":"")} key={a.icao} onClick={()=>setSel(a)}><div><b>{a.icao} · {a.iata}</b><span>{a.name}</span></div><span>{a.runways.length}</span></button>)}</div></Card><Card><div className="card-head"><div><small>AIRPORT PROFILE</small><h3>{sel.icao}</h3></div><button className={"star "+(favorites.includes(sel.icao)?"on":"")} onClick={toggle}>★</button></div><h2>{sel.name}</h2><p>{sel.city}, {sel.country} · {sel.elev} ft</p><div className="stat-grid four"><Stat label="ICAO" value={sel.icao}/><Stat label="IATA" value={sel.iata}/><Stat label="Elevation" value={sel.elev+" ft"}/><Stat label="Runways" value={sel.runways.length}/></div><h4>Runways</h4><div className="chips">{sel.runways.map((r)=><span key={r}>{r}</span>)}</div><label className="field"><span>Private note</span><textarea value={notes[sel.icao] || ""} onChange={(e)=>setNotes({...notes,[sel.icao]:e.target.value})} placeholder="Your airport notes…"/></label></Card></div></>;
 }
 
-function Aircraft({ favorites, setFavorites }: any) {
+function Aircraft({ favorites, setFavorites, notes, setNotes }: any) {
   const [q,setQ] = useState(""); const [sel,setSel] = useState(aircraft[0]);
   const list = aircraft.filter((x) => (x.icao+" "+x.name+" "+x.family).toLowerCase().includes(q.toLowerCase()));
   const toggle = () => setFavorites(favorites.includes(sel.icao) ? favorites.filter((x:string)=>x!==sel.icao) : [...favorites,sel.icao]);
-  return <><Header eyebrow="AIRCRAFT" title="Aircraft Library" desc="Simulation-oriented reference pages for the aircraft you fly."/><div className="grid-2"><Card><Field label="Search" value={q} onChange={setQ} placeholder="A320, 737, E190…"/><div className="list scroll">{list.map((a)=><button className={"row button-row "+(a.icao===sel.icao?"selected":"")} key={a.icao} onClick={()=>setSel(a)}><div><b>{a.icao}</b><span>{a.name}</span></div><small>{a.family}</small></button>)}</div></Card><Card><div className="card-head"><div><small>AIRCRAFT PROFILE</small><h3>{sel.icao}</h3></div><button className={"star "+(favorites.includes(sel.icao)?"on":"")} onClick={toggle}>★</button></div><h2>{sel.name}</h2><p>{sel.family}</p><div className="stat-grid three"><Stat label="Range" value={sel.range}/><Stat label="Cruise" value={sel.cruise}/><Stat label="MTOW" value={sel.mtow}/><Stat label="Seats" value={sel.seats}/><Stat label="Engine" value={sel.engine}/></div><div className="notice">Simulation reference only. Verify technical data against current aircraft documentation.</div></Card></div></>;
+  return <><Header eyebrow="AIRCRAFT" title="Aircraft Library" desc="Simulation-oriented reference pages for the aircraft you fly."/><div className="grid-2"><Card><Field label="Search" value={q} onChange={setQ} placeholder="A320, 737, E190…"/><div className="list scroll">{list.map((a)=><button className={"row button-row "+(a.icao===sel.icao?"selected":"")} key={a.icao} onClick={()=>setSel(a)}><div><b>{a.icao}</b><span>{a.name}</span></div><small>{a.family}</small></button>)}</div></Card><Card><div className="card-head"><div><small>AIRCRAFT PROFILE</small><h3>{sel.icao}</h3></div><button className={"star "+(favorites.includes(sel.icao)?"on":"")} onClick={toggle}>★</button></div><h2>{sel.name}</h2><p>{sel.family}</p><div className="stat-grid three"><Stat label="Range" value={sel.range}/><Stat label="Cruise" value={sel.cruise}/><Stat label="MTOW" value={sel.mtow}/><Stat label="Seats" value={sel.seats}/><Stat label="Engine" value={sel.engine}/></div><div className="notice">Simulation reference only. Verify technical data against current aircraft documentation.</div><label className="field"><span>Personal aircraft note</span><textarea value={notes[sel.icao] || ""} onChange={(e)=>setNotes({...notes,[sel.icao]:e.target.value})} placeholder="Your notes for this aircraft…"/></label></Card></div></>;
+}
+
+function pickRecordValue(record: any, paths: string[]): string {
+  for (const path of paths) {
+    const value = path.split(".").reduce((current: any, key) => current?.[key], record);
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      if (typeof value === "object") return displayValue(value.icao, value.name, value.callsign, value.code, value.id);
+      return String(value);
+    }
+  }
+  return "—";
+}
+
+function NewSky() {
+  const [view, setView] = useState<"ongoing" | "recent">("ongoing");
+  const [result, setResult] = useState<any>(null);
+  const [selected, setSelected] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
+
+  const load = async (nextView: "ongoing" | "recent" = view) => {
+    setView(nextView); setLoading(true); setError(""); setSelected(null);
+    try {
+      const response = await fetch("/api/newsky?view=" + nextView, { cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "NewSky request failed.");
+      setResult(body); setLoaded(true);
+    } catch (e:any) {
+      setResult(null); setError(e.message || "Could not load NewSky data."); setLoaded(true);
+    } finally { setLoading(false); }
+  };
+  const records = Array.isArray(result?.results) ? result.results : Array.isArray(result?.flights) ? result.flights : Array.isArray(result) ? result : [];
+  const details = async (record: any) => {
+    const id = pickRecordValue(record, ["id","_id","flightId","flight.id"]);
+    if (id === "—") { setSelected(record); return; }
+    try {
+      const response = await fetch("/api/newsky?view=flight&id=" + encodeURIComponent(id), { cache: "no-store" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not fetch flight details.");
+      setSelected(body.flight || body);
+    } catch { setSelected(record); }
+  };
+  useEffect(() => { void load("ongoing"); }, []);
+
+  return <>
+    <Header eyebrow="AIRLINE INTEGRATION" title="NewSky" desc="Live airline flights and recent results from your NewSky account. Values appear only when the official API returns them." action={<Badge tone={result ? "live" : "neutral"}>{loading ? "CONNECTING" : result ? "CONNECTED" : "API STATUS"}</Badge>} />
+    <Card><div className="newsky-toolbar"><div className="tabs"><button className={view==="ongoing"?"active":""} onClick={()=>load("ongoing")} disabled={loading}>Ongoing flights</button><button className={view==="recent"?"active":""} onClick={()=>load("recent")} disabled={loading}>Recent flights</button></div><button className="btn" onClick={()=>load(view)} disabled={loading}>{loading ? "Refreshing…" : "Refresh data"}</button></div>
+      {error && <div className="error">{error}</div>}
+      {!loaded && !loading && <div className="empty">Choose a NewSky view to load your airline data.</div>}
+      {result && <div className="notice">Connected to NewSky. {result.totalResults !== undefined ? result.totalResults + " matching records reported by the API." : records.length + " records returned."}</div>}
+      {loaded && !error && !records.length && <div className="empty">NewSky returned no {view === "ongoing" ? "ongoing" : "recent"} flights.</div>}
+    </Card>
+    {records.length > 0 && <Card><div className="table-wrap"><table><thead><tr><th>Flight / ID</th><th>Pilot</th><th>Aircraft</th><th>Departure</th><th>Arrival</th><th>Status</th><th></th></tr></thead><tbody>
+      {records.map((record:any,index:number)=><tr key={String(record.id||record._id||index)}>
+        <td><b>{pickRecordValue(record,["callsign","atc.callsign","flightNumber","flight_number","number","id"])}</b><small>{pickRecordValue(record,["id","_id","flightId"])}</small></td>
+        <td>{pickRecordValue(record,["pilot.name","pilot.fullName","pilotName","pilot.callsign","user.name"])}</td>
+        <td>{pickRecordValue(record,["aircraft.icao","aircraft.icaoCode","aircraft.name","aircraftIcao","aircraft_code","aircraft"])}</td>
+        <td>{pickRecordValue(record,["departure.icao","departure.icaoCode","departureIcao","origin.icao","origin","departureAirport.icao"])}</td>
+        <td>{pickRecordValue(record,["arrival.icao","arrival.icaoCode","destinationIcao","destination.icao","destination","arrivalAirport.icao"])}</td>
+        <td>{pickRecordValue(record,["status","state","flight.status"])}</td>
+        <td><button className="link" onClick={()=>details(record)}>Details</button></td>
+      </tr>)}
+    </tbody></table></div></Card>}
+    {selected && <Card><div className="card-head"><div><small>FLIGHT DETAILS</small><h3>{pickRecordValue(selected,["callsign","atc.callsign","flightNumber","id","_id"])}</h3></div><button className="btn" onClick={()=>setSelected(null)}>Close</button></div>
+      <div className="grid-2"><div className="data-pair"><span>Route</span><b>{pickRecordValue(selected,["departure.icao","departureIcao","origin.icao","origin"])} → {pickRecordValue(selected,["arrival.icao","destinationIcao","destination.icao","destination"])}</b></div><div className="data-pair"><span>Landing rate</span><b>{pickRecordValue(selected,["landingRateFpm","landingRate","landing_rate_fpm","landing.rate"])}</b></div></div>
+      <details><summary>Full response from NewSky</summary><pre>{JSON.stringify(selected,null,2).slice(0,30000)}</pre></details>
+    </Card>}
+    <Card><small>SETUP</small><h3>Secure API connection</h3><p>NewSky airline endpoints require an API key with the appropriate scope. Store it in the hosting provider as <code>NEWSKY_API_KEY</code>; the key is used only on the server and is never sent to the browser. The API key must include the <b>flights</b> scope for flight lists/details.</p><a href="https://wiki.newsky.app/en/airline/airline-api" target="_blank" rel="noreferrer">NewSky API documentation ↗</a></Card>
+  </>;
 }
 
 function Weather() {
@@ -409,13 +641,44 @@ function Favorites({ favorites, go }:any) {
 }
 
 function Settings({ profile,setProfile }:any) {
-  return <><Header eyebrow="SETTINGS" title="Workspace settings" desc="Your pilot identity, simulator and integrations."/><div className="grid-2"><Card><h3>Profile</h3><div className="form-grid two"><Field label="Name" value={profile.name} onChange={(v)=>setProfile({...profile,name:v})}/><Field label="Callsign" value={profile.callsign} onChange={(v)=>setProfile({...profile,callsign:v})}/><Field label="Home airport" value={profile.home} onChange={(v)=>setProfile({...profile,home:v.toUpperCase()})}/><Field label="Simulator" value={profile.sim} onChange={(v)=>setProfile({...profile,sim:v})}/></div></Card><Card><h3>Integrations</h3><div className="row"><div><b>VATSIM</b><span>Public network APIs</span></div><Badge tone="live">READY</Badge></div><div className="row"><div><b>SimBrief</b><span>On-demand OFP import</span></div><Badge tone="accent">READY</Badge></div><div className="row"><div><b>Neon</b><span>Cloud database</span></div><Badge tone="neutral">CONFIGURABLE</Badge></div></Card></div></>;
+  const [dbStatus, setDbStatus] = useState<"checking"|"online"|"offline">("checking");
+  const [simbriefId, setSimbriefId] = useState("");
+  useEffect(() => {
+    fetch("/api/db/health").then((r)=>setDbStatus(r.ok?"online":"offline")).catch(()=>setDbStatus("offline"));
+    try { setSimbriefId(localStorage.getItem("aerodeck-simbrief-id") || ""); } catch {}
+  }, []);
+  const storeSimbriefId = (value:string) => {
+    setSimbriefId(value);
+    try { localStorage.setItem("aerodeck-simbrief-id", value); } catch {}
+  };
+  return <>
+    <Header eyebrow="PREFERENCES" title="Workspace settings" desc="Set your identity and connect the providers you actually use."/>
+    <div className="grid-2">
+      <Card><h3>Pilot profile</h3><div className="form-grid two">
+        <Field label="Name" value={profile.name} onChange={(v)=>setProfile({...profile,name:v})}/>
+        <Field label="Callsign (optional)" value={profile.callsign} onChange={(v)=>setProfile({...profile,callsign:v.toUpperCase()})} placeholder="Enter when relevant"/>
+        <Field label="Home airport ICAO" value={profile.home} onChange={(v)=>setProfile({...profile,home:v.toUpperCase()})} placeholder="e.g. EHAM"/>
+        <Field label="Preferred simulator" value={profile.sim} onChange={(v)=>setProfile({...profile,sim:v})} placeholder="e.g. MSFS 2024"/>
+      </div><p>Callsigns are not generated by AeroDeck. A callsign appears only when you set one or your imported flight plan includes one.</p></Card>
+      <Card><h3>Connections</h3>
+        <div className="row"><div><b>Database</b><span>Neon PostgreSQL</span></div><Badge tone={dbStatus==="online"?"live":"neutral"}>{dbStatus==="online"?"CONNECTED":dbStatus==="offline"?"OFFLINE":"CHECKING"}</Badge></div>
+        <div className="row"><div><b>VATSIM</b><span>Public live network and METAR feeds</span></div><Badge tone="accent">PUBLIC API</Badge></div>
+        <div className="row"><div><b>SimBrief</b><span>Uses the username or Pilot ID you enter</span></div><Badge tone="accent">ON DEMAND</Badge></div>
+        <div className="row"><div><b>NewSky</b><span>Requires a server-side airline API key</span></div><Badge tone="neutral">SETUP REQUIRED</Badge></div>
+      </Card>
+      <Card><h3>SimBrief shortcut</h3><p>Save the identifier you normally use. It is stored in this browser, not sent anywhere until you import an OFP.</p><Field label="SimBrief username or numeric Pilot ID" value={simbriefId} onChange={storeSimbriefId} placeholder="Username / Pilot ID"/></Card>
+    </div>
+  </>;
 }
 
 function hours(fs:Flight[]) {
   return fs.reduce((sum,f)=>{ const parts=(f.duration||"0:0").split(":").map(Number); return sum+(parts[0]||0)+(parts[1]||0)/60; },0).toFixed(1);
 }
 function bestLanding(fs:Flight[]) {
-  const values=fs.map(f=>Number(String(f.landing||"").replace(/[^\d-]/g,""))).filter(Number.isFinite);
-  return values.length ? Math.min(...values)+" fpm" : "—";
+  const values = fs
+    .map((flight) => String(flight.landing || "").trim())
+    .filter((value) => value.length > 0)
+    .map((value) => Number(value.replace(/[^\\d-]/g, "")))
+    .filter((value) => Number.isFinite(value));
+  return values.length ? Math.min(...values) + " fpm" : "—";
 }
