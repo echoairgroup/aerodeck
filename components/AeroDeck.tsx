@@ -14,6 +14,8 @@ type Flight = {
   notes: string;
 };
 
+const DEFAULT_PROFILE = { name: "Christian", callsign: "ECV412", home: "EDDL", sim: "MSFS 2024" };
+
 const nav = [
   ["dashboard", "Dashboard", "⌂"],
   ["flight", "Flight Center", "✈"],
@@ -88,7 +90,7 @@ export default function AeroDeck() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [flights, setFlights] = useState<Flight[]>(defaultFlights());
-  const [profile, setProfile] = useState({ name: "Christian", callsign: "ECV412", home: "EDDL", sim: "MSFS 2024" });
+  const [profile, setProfile] = useState(DEFAULT_PROFILE);
   const [favorites, setFavorites] = useState<string[]>(["EHAM", "EDDL", "LGSM", "A21N"]);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [toast, setToast] = useState("");
@@ -101,7 +103,9 @@ export default function AeroDeck() {
       if (raw) {
         const state = JSON.parse(raw);
         if (Array.isArray(state.flights)) setFlights(state.flights);
-        if (state.profile) setProfile(state.profile);
+        if (state.profile && typeof state.profile === "object" && !Array.isArray(state.profile)) {
+          setProfile({ ...DEFAULT_PROFILE, ...state.profile });
+        }
         if (Array.isArray(state.favorites)) setFavorites(state.favorites);
         if (state.notes) setNotes(state.notes);
       }
@@ -111,17 +115,36 @@ export default function AeroDeck() {
       if (!r.ok) throw new Error("cloud unavailable");
       const state = await r.json();
       try {
-        if (state.profileJson) setProfile(JSON.parse(state.profileJson));
-        if (state.flightsJson) setFlights(JSON.parse(state.flightsJson));
-        if (state.favoritesJson) setFavorites(JSON.parse(state.favoritesJson));
-        if (state.notesJson) setNotes(JSON.parse(state.notesJson));
+        const cloudProfile = JSON.parse(state.profileJson || "{}");
+        const cloudFlights = JSON.parse(state.flightsJson || "[]");
+        const cloudFavorites = JSON.parse(state.favoritesJson || "[]");
+        const cloudNotes = JSON.parse(state.notesJson || "{}");
+        const isUninitialized =
+          cloudProfile && typeof cloudProfile === "object" && !Array.isArray(cloudProfile) && Object.keys(cloudProfile).length === 0 &&
+          Array.isArray(cloudFlights) && cloudFlights.length === 0 &&
+          Array.isArray(cloudFavorites) && cloudFavorites.length === 0 &&
+          cloudNotes && typeof cloudNotes === "object" && !Array.isArray(cloudNotes) && Object.keys(cloudNotes).length === 0;
+
+        // A freshly-created cloud row is empty. Do not let it erase the local/default startup state.
+        if (!isUninitialized) {
+          if (cloudProfile && typeof cloudProfile === "object" && !Array.isArray(cloudProfile)) {
+            setProfile({ ...DEFAULT_PROFILE, ...cloudProfile });
+          }
+          if (Array.isArray(cloudFlights)) setFlights(cloudFlights);
+          if (Array.isArray(cloudFavorites)) setFavorites(cloudFavorites);
+          if (cloudNotes && typeof cloudNotes === "object" && !Array.isArray(cloudNotes)) setNotes(cloudNotes);
+        }
         setDb("online");
-      } catch {}
+      } catch {
+        setDb("online");
+      }
     }).catch(() => {}).finally(() => setCloudLoaded(true));
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("aerodeck-state", JSON.stringify({ flights, profile, favorites, notes }));
+    try {
+      localStorage.setItem("aerodeck-state", JSON.stringify({ flights, profile, favorites, notes }));
+    } catch {}
     if (!cloudLoaded) return;
     const timer = window.setTimeout(() => {
       fetch("/api/state", {
@@ -199,7 +222,7 @@ export default function AeroDeck() {
           <div className="top-right">
             <button className="search-trigger" onClick={() => setSearchOpen(true)}>⌕ <span>Search anything…</span><kbd>Ctrl K</kbd></button>
             <button className="round-button" onClick={() => go("settings")}>⚙</button>
-            <button className="profile" onClick={() => go("settings")}><span>{profile.name.slice(0, 1).toUpperCase()}</span><b>{profile.name}<small>{profile.callsign}</small></b></button>
+            <button className="profile" onClick={() => go("settings")}><span>{(typeof profile.name === "string" && profile.name ? profile.name : "C").slice(0, 1).toUpperCase()}</span><b>{typeof profile.name === "string" && profile.name ? profile.name : DEFAULT_PROFILE.name}<small>{profile.callsign || DEFAULT_PROFILE.callsign}</small></b></button>
           </div>
         </header>
 
@@ -270,7 +293,10 @@ function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "li
 function Dashboard({ flights, profile, go }: any) {
   const [network, setNetwork] = useState<any>(null);
   const [weather, setWeather] = useState<any[]>([]);
-  const f = flights[0];
+  const f = flights[0] ?? {
+    from: "—", to: "—", callsign: profile.callsign || "—", aircraft: "—", duration: "—",
+    notes: "No flight planned", landing: "—",
+  };
   useEffect(() => {
     fetch("/api/vatsim").then((r) => r.json()).then(setNetwork).catch(() => {});
     fetch("/api/metar?icao=EDDL,EHAM,LGSM").then((r) => r.json()).then((d) => setWeather(d.items || [])).catch(() => {});
