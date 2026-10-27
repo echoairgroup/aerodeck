@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: aerodeck
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    autoDeploy: true
+    healthCheckPath: /
