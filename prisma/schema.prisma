@@ -478,3 +478,12 @@ model AeroDeckState {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
+
+// Preserve the existing Neon sample table and its rows when running prisma db push.
+model PlayingWithNeon {
+  id    Int     @id @default(autoincrement())
+  name  String  @db.Text
+  value Float?  @db.Real
+
+  @@map("playing_with_neon")
+}
