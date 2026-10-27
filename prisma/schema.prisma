@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -465,4 +465,16 @@ model EventFavorite {
   createdAt DateTime @default(now())
 
   @@unique([userId, eventId])
+}
+
+
+model AeroDeckState {
+  id           String   @id
+  profileJson  String   @default("{}")
+  flightsJson  String   @default("[]")
+  favoritesJson String  @default("[]")
+  notesJson    String   @default("{}")
+  trainingJson String   @default("[]")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
