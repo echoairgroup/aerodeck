@@ -156,6 +156,9 @@ export default function AeroDeck({ initialSection = "dashboard" }: { initialSect
   const [section, setSection] = useState(initialSection);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [externalSearchResults, setExternalSearchResults] = useState<any[]>([]);
+  const [externalSearchLoading, setExternalSearchLoading] = useState(false);
+  const [externalSearchError, setExternalSearchError] = useState("");
   const [flights, setFlights] = useState<Flight[]>(defaultFlights());
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -239,9 +242,19 @@ export default function AeroDeck({ initialSection = "dashboard" }: { initialSect
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  useEffect(() => {
+    const syncSectionFromUrl = () => {
+      const pathSection = window.location.pathname.split("/").filter(Boolean)[0] || "dashboard";
+      setSection(nav.some(([id]) => id === pathSection) ? pathSection : "dashboard");
+    };
+    window.addEventListener("popstate", syncSectionFromUrl);
+    return () => window.removeEventListener("popstate", syncSectionFromUrl);
+  }, []);
+
   const go = (id: string) => {
     setSection(id);
-    window.history.replaceState({}, "", id === "dashboard" ? "/" : "/" + id);
+    const nextPath = id === "dashboard" ? "/" : "/" + id;
+    if (window.location.pathname !== nextPath) window.history.pushState({}, "", nextPath);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -264,6 +277,64 @@ export default function AeroDeck({ initialSection = "dashboard" }: { initialSect
       .map((x) => ({ type: "Knowledge", title: x[0], meta: x[1] }));
     return [...a, ...ac, ...k].slice(0, 12);
   }, [search]);
+
+  useEffect(() => {
+    const query = search.trim();
+    if (query.length < 2) {
+      setExternalSearchResults([]);
+      setExternalSearchLoading(false);
+      setExternalSearchError("");
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setExternalSearchLoading(true);
+      setExternalSearchError("");
+      try {
+        const [airportResponse, aircraftResponse] = await Promise.all([
+          fetch("/api/airports?q=" + encodeURIComponent(query), { signal: controller.signal }).then(async (response) => {
+            const data = await response.json();
+            return response.ok ? data : { items: [], error: data.error };
+          }),
+          fetch("/api/aircraft?q=" + encodeURIComponent(query), { signal: controller.signal }).then(async (response) => {
+            const data = await response.json();
+            return response.ok ? data : { items: [], error: data.error };
+          })
+        ]);
+        const airportResults = (Array.isArray(airportResponse.items) ? airportResponse.items : []).map((item:any) => ({
+          type: "Airport",
+          title: [item.icao, item.iata, item.name].filter(Boolean).join(" · "),
+          meta: [item.city, item.country].filter(Boolean).join(", ")
+        }));
+        const aircraftResults = (Array.isArray(aircraftResponse.items) ? aircraftResponse.items : []).map((item:any) => ({
+          type: "Aircraft",
+          title: [item.icao, item.iata, item.name].filter(Boolean).join(" · "),
+          meta: "OpenFlights reference"
+        }));
+        setExternalSearchResults([...airportResults, ...aircraftResults]);
+        if (!airportResponse.items && !aircraftResponse.items && (airportResponse.error || aircraftResponse.error)) {
+          setExternalSearchError("One or more reference sources are unavailable.");
+        }
+      } catch (error:any) {
+        if (!controller.signal.aborted) setExternalSearchError(error.message || "Search sources could not be reached.");
+      } finally {
+        if (!controller.signal.aborted) setExternalSearchLoading(false);
+      }
+    }, 250);
+
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [search]);
+
+  const allSearchResults = useMemo(() => {
+    const seen = new Set<string>();
+    return [...externalSearchResults, ...searchResults].filter((item) => {
+      const key = item.type + "|" + item.title.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 18);
+  }, [externalSearchResults, searchResults]);
 
   return (
     <div className="app-shell">
@@ -321,7 +392,7 @@ export default function AeroDeck({ initialSection = "dashboard" }: { initialSect
           <div className="search-modal" onMouseDown={(e) => e.stopPropagation()}>
             <input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search airports, aircraft, aviation terms…" />
             {!search && <div className="quick-search">{nav.slice(0, 10).map(([id, label, icon]) => <button key={id} onClick={() => { setSearchOpen(false); go(id); }}><i>{icon}</i>{label}</button>)}</div>}
-            {search && <div className="results">{searchResults.length ? searchResults.map((result, i) => <button key={i} onClick={() => { setSearchOpen(false); go(result.type === "Airport" ? "airports" : result.type === "Aircraft" ? "aircraft" : "knowledge"); }}><span>{result.type}</span><b>{result.title}</b><small>{result.meta}</small></button>) : <div className="empty">No results.</div>}</div>}
+            {search && <div className="results">{allSearchResults.length ? allSearchResults.map((result, i) => <button key={result.type + result.title + i} onClick={() => { setSearchOpen(false); go(result.type === "Airport" ? "airports" : result.type === "Aircraft" ? "aircraft" : "knowledge"); }}><span>{result.type}</span><b>{result.title}</b><small>{result.meta}</small></button>) : externalSearchLoading ? <div className="empty">Searching live reference data…</div> : externalSearchError ? <div className="empty">{externalSearchError}</div> : <div className="empty">No results found in the available reference data.</div>}</div>}
           </div>
         </div>
       )}
