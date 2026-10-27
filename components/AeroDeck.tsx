@@ -521,10 +521,72 @@ function SimBrief({ notify, setFlights, go }: any) {
 }
 
 function Airports({ favorites, setFavorites, notes, setNotes }: any) {
-  const [q,setQ] = useState(""); const [sel,setSel] = useState(airports[0]);
-  const list = airports.filter((x) => (x.icao+" "+x.iata+" "+x.name+" "+x.city).toLowerCase().includes(q.toLowerCase()));
-  const toggle = () => setFavorites(favorites.includes(sel.icao) ? favorites.filter((x:string)=>x!==sel.icao) : [...favorites,sel.icao]);
-  return <><Header eyebrow="AIRPORTS" title="Airport Explorer" desc="Start with a useful curated dataset; live/expanded providers can be added without changing the interface."/><div className="grid-2"><Card><Field label="Search" value={q} onChange={setQ} placeholder="ICAO, IATA, city…"/><div className="list scroll">{list.map((a)=><button className={"row button-row "+(a.icao===sel.icao?"selected":"")} key={a.icao} onClick={()=>setSel(a)}><div><b>{a.icao} · {a.iata}</b><span>{a.name}</span></div><span>{a.runways.length}</span></button>)}</div></Card><Card><div className="card-head"><div><small>AIRPORT PROFILE</small><h3>{sel.icao}</h3></div><button className={"star "+(favorites.includes(sel.icao)?"on":"")} onClick={toggle}>★</button></div><h2>{sel.name}</h2><p>{sel.city}, {sel.country} · {sel.elev} ft</p><div className="stat-grid four"><Stat label="ICAO" value={sel.icao}/><Stat label="IATA" value={sel.iata}/><Stat label="Elevation" value={sel.elev+" ft"}/><Stat label="Runways" value={sel.runways.length}/></div><h4>Runways</h4><div className="chips">{sel.runways.map((r)=><span key={r}>{r}</span>)}</div><label className="field"><span>Private note</span><textarea value={notes[sel.icao] || ""} onChange={(e)=>setNotes({...notes,[sel.icao]:e.target.value})} placeholder="Your airport notes…"/></label></Card></div></>;
+  const [q,setQ] = useState("");
+  const [sel,setSel] = useState<any>(airports[0]);
+  const [items,setItems] = useState<any[]>(airports);
+  const [loading,setLoading] = useState(false);
+  const [searchError,setSearchError] = useState("");
+
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) {
+      setItems(airports.filter((x) => (x.icao+" "+x.iata+" "+x.name+" "+x.city).toLowerCase().includes(term.toLowerCase())));
+      setSearchError("");
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setLoading(true);
+      setSearchError("");
+      try {
+        const response = await fetch("/api/airports?q=" + encodeURIComponent(term), { signal: controller.signal });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Airport search is temporarily unavailable.");
+        const results = Array.isArray(body.items) ? body.items : [];
+        setItems(results);
+      } catch (error:any) {
+        if (!controller.signal.aborted) {
+          setSearchError(error.message || "Airport search is temporarily unavailable. Showing the local reference list.");
+          setItems(airports.filter((x) => (x.icao+" "+x.iata+" "+x.name+" "+x.city).toLowerCase().includes(term.toLowerCase())));
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }, 300);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [q]);
+
+  const toggle = () => {
+    if (!sel?.icao) return;
+    setFavorites(favorites.includes(sel.icao) ? favorites.filter((x:string)=>x!==sel.icao) : [...favorites,sel.icao]);
+  };
+  return <>
+    <Header eyebrow="AIRPORTS" title="Airport Explorer" desc="Search airport identifiers, names, cities and IATA codes using the public OurAirports dataset. Runway details are shown only when available."/>
+    <div className="grid-2">
+      <Card>
+        <Field label="Search worldwide airports" value={q} onChange={setQ} placeholder="ICAO, IATA, airport, city…"/>
+        {loading && <p className="muted">Searching airport records…</p>}
+        {searchError && <div className="notice">{searchError}</div>}
+        <div className="list scroll">
+          {items.map((a:any,index:number)=><button className={"row button-row "+(a.icao===sel?.icao?"selected":"")} key={a.icao || a.iata || a.name+index} onClick={()=>setSel(a)}>
+            <div><b>{a.icao || a.iata || a.ident || "No ICAO code"}{a.iata ? " · "+a.iata : ""}</b><span>{a.name}</span></div><small>{a.city || a.country || a.type || ""}</small>
+          </button>)}
+          {!loading && !items.length && <div className="empty">No matching airports found in the returned dataset.</div>}
+        </div>
+      </Card>
+      {sel && <Card>
+        <div className="card-head"><div><small>AIRPORT PROFILE</small><h3>{sel.icao || sel.ident || "Identifier unavailable"}</h3></div><button className={"star "+(favorites.includes(sel.icao)?"on":"")} onClick={toggle} disabled={!sel.icao} aria-label="Toggle airport favourite">★</button></div>
+        <h2>{sel.name}</h2>
+        <p>{[sel.city,sel.country].filter(Boolean).join(", ") || "Location details not supplied"} · {sel.elev === null || sel.elev === undefined || sel.elev === "" ? "Elevation not supplied" : sel.elev+" ft"}</p>
+        <div className="stat-grid four"><Stat label="ICAO / Ident" value={sel.icao || sel.ident || "—"}/><Stat label="IATA" value={sel.iata || "—"}/><Stat label="Elevation" value={sel.elev === null || sel.elev === undefined || sel.elev === "" ? "—" : sel.elev+" ft"}/><Stat label="Runways" value={sel.runways?.length ? sel.runways.length : "Not supplied"}/></div>
+        <h4>Runways</h4>
+        {sel.runways?.length ? <div className="chips">{sel.runways.map((r:string)=><span key={r}>{r}</span>)}</div> : <p className="muted">Runway details are not included in the current airport lookup result.</p>}
+        <label className="field"><span>Personal note</span><textarea value={notes[sel.icao || sel.ident] || ""} onChange={(e)=>setNotes({...notes,[sel.icao || sel.ident]:e.target.value})} placeholder="Your airport notes…"/></label>
+        <p className="muted">Airport lookup source: {sel.source || "AeroDeck curated reference"}.</p>
+      </Card>}
+    </div>
+  </>;
 }
 
 function Aircraft({ favorites, setFavorites, notes, setNotes }: any) {
