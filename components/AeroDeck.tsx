@@ -93,6 +93,7 @@ export default function AeroDeck() {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [toast, setToast] = useState("");
   const [db, setDb] = useState("checking");
+  const [cloudLoaded, setCloudLoaded] = useState(false);
 
   useEffect(() => {
     try {
@@ -106,11 +107,31 @@ export default function AeroDeck() {
       }
     } catch {}
     fetch("/api/db/health").then((r) => setDb(r.ok ? "online" : "offline")).catch(() => setDb("offline"));
+    fetch("/api/state").then(async (r) => {
+      if (!r.ok) throw new Error("cloud unavailable");
+      const state = await r.json();
+      try {
+        if (state.profileJson) setProfile(JSON.parse(state.profileJson));
+        if (state.flightsJson) setFlights(JSON.parse(state.flightsJson));
+        if (state.favoritesJson) setFavorites(JSON.parse(state.favoritesJson));
+        if (state.notesJson) setNotes(JSON.parse(state.notesJson));
+        setDb("online");
+      } catch {}
+    }).catch(() => {}).finally(() => setCloudLoaded(true));
   }, []);
 
   useEffect(() => {
     localStorage.setItem("aerodeck-state", JSON.stringify({ flights, profile, favorites, notes }));
-  }, [flights, profile, favorites, notes]);
+    if (!cloudLoaded) return;
+    const timer = window.setTimeout(() => {
+      fetch("/api/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flights, profile, favorites, notes }),
+      }).catch(() => {});
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [flights, profile, favorites, notes, cloudLoaded]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
