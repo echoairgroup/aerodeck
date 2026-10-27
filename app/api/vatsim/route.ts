@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 
-export const revalidate = 15;
-
 export async function GET() {
   try {
     const response = await fetch("https://data.vatsim.net/v3/vatsim-data.json", {
