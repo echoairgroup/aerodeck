@@ -21,7 +21,7 @@ Set `DATABASE_URL` in a local `.env` file before using the cloud-state and datab
 
 ## Deployment and domains
 
-AeroDeck uses Next.js server route handlers and Prisma/PostgreSQL. It needs a Next.js-capable host (for example Vercel or Render) plus Neon. **GitHub Pages only serves static output**, so it cannot run these API routes or Prisma itself. A split setup with GitHub Pages for a static frontend and a separate API is possible, but it would require a different frontend/backend architecture.
+AeroDeck uses Next.js server route handlers and Prisma/PostgreSQL. It needs a Next.js-capable host such as Vercel or Render plus Neon. The build script runs `prisma generate` itself, so a standard `npm run build` works on both hosts. Set `DATABASE_URL` in the host's environment before the production deploy and add `NEWSKY_API_KEY` only if you have the correct NewSky airline API key. **GitHub Pages only serves static output**, so it cannot run these API routes or Prisma itself. A split setup with GitHub Pages for a static frontend and a separate API is possible, but it would require a different frontend/backend architecture.
 
 To use a personal domain, register a domain name with a registrar and point its DNS to the chosen host. Then AeroDeck can use your domain instead of the hosting provider's subdomain. No domain name or DNS settings are hard-coded in this repository.
 
