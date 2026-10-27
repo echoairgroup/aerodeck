@@ -691,29 +691,46 @@ function Airports({ favorites, setFavorites, notes, setNotes }: any) {
 function Aircraft({ favorites, setFavorites, notes, setNotes }: any) {
   const [q,setQ] = useState("");
   const [items,setItems] = useState<any[]>([]);
-  const [loading,setLoading] = useState(true);
+  const [loading,setLoading] = useState(false);
   const [error,setError] = useState("");
   const [sourceInfo,setSourceInfo] = useState<any>(null);
   const [selected,setSelected] = useState<any>(null);
 
   useEffect(() => {
+    const query = q.trim();
+    if (query.length < 2) {
+      setItems([]);
+      setSelected(null);
+      setError("");
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
-    fetch("/api/aircraft", { signal: controller.signal })
-      .then(async (response) => {
+    const timer = window.setTimeout(async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const response = await fetch("/api/aircraft?q=" + encodeURIComponent(query), { signal: controller.signal });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "Aircraft data is unavailable.");
         setItems(Array.isArray(body.items) ? body.items : []);
         setSourceInfo(body);
-      })
-      .catch((e:any) => { if (!controller.signal.aborted) setError(e.message || "Aircraft data is unavailable."); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, []);
+        setSelected(null);
+      } catch (e:any) {
+        if (!controller.signal.aborted) {
+          setItems([]);
+          setSelected(null);
+          setError(e.message || "Aircraft data is unavailable.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [q]);
 
-  const list = items.filter((item:any) =>
-    [item.icao,item.iata,item.name].join(" ").toLowerCase().includes(q.trim().toLowerCase())
-  );
-  const active = (selected && list.some((item:any) => item.name === selected.name && item.icao === selected.icao))
+  const list = items;
+  const active = selected && list.some((item:any) => item.name === selected.name && item.icao === selected.icao)
     ? selected
     : list[0] || null;
   const noteKey = active?.icao || active?.name || "";
@@ -729,15 +746,15 @@ function Aircraft({ favorites, setFavorites, notes, setNotes }: any) {
     <Header eyebrow="AIRCRAFT REFERENCE" title="Aircraft library" desc="Search aircraft type names and IATA/ICAO type codes. This directory uses a curated public reference dataset; it does not invent performance specifications." />
     <div className="grid-2">
       <Card>
-        <Field label="Search aircraft types" value={q} onChange={setQ} placeholder="A320neo, B738, A359, E190…"/>
-        {loading && <p className="muted">Loading aircraft reference data…</p>}
+        <Field label="Search aircraft types" value={q} onChange={(value)=>{setQ(value);setSelected(null);}} placeholder="A320neo, B738, A359, E190…"/>
+        {loading && <p className="muted">Searching aircraft type records…</p>}
         {error && <div className="error">{error}</div>}
         <div className="list scroll">
           {list.map((item:any,index:number)=><button className={"row button-row "+(item.name===active?.name&&item.icao===active?.icao?"selected":"")} key={item.icao+"-"+item.iata+"-"+item.name+"-"+index} onClick={()=>setSelected(item)}>
             <div><b>{item.icao || "ICAO unavailable"}{item.iata ? " · "+item.iata : ""}</b><span>{item.name}</span></div>
           </button>)}
-          {!loading && !error && !list.length && <div className="empty">No matching aircraft type in this dataset.</div>}
-          {!loading && error && !items.length && <div className="empty">Aircraft results are not shown until the source is available.</div>}
+          {!loading && !error && !list.length && <div className="empty">{q.trim().length < 2 ? "Search by at least two characters to query the aircraft reference dataset." : "No matching aircraft type in this dataset."}</div>}
+          {!loading && error && !items.length && <div className="empty">Aircraft results are unavailable because the source did not respond.</div>}
         </div>
       </Card>
       {active && <Card>
