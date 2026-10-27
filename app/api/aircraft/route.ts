@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 
     const text = await response.text();
     const rows = parse(text, { columns: false, skip_empty_lines: true, bom: true, relax_quotes: true }) as AircraftRow[];
-    const all: AircraftResult[] = rows.map((row) => ({
+    const all: AircraftResult[] = rows.map((row): AircraftResult => ({
       name: String(row[0] || "").trim(),
       iata: String(row[1] || "").trim() === "\\N" ? "" : String(row[1] || "").trim().toUpperCase(),
       icao: String(row[2] || "").trim() === "\\N" ? "" : String(row[2] || "").trim().toUpperCase(),
