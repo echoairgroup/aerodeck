@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
 
 export async function GET() {
-  const configured = Boolean(process.env.DATABASE_URL);
-  return NextResponse.json({ configured, provider: configured ? "PostgreSQL/Neon" : null }, { status: 200 });
+  if (!process.env.DATABASE_URL) return NextResponse.json({ configured: false }, { status: 503 });
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return NextResponse.json({ configured: true, provider: "PostgreSQL/Neon" });
+  } catch {
+    return NextResponse.json({ configured: true, provider: "PostgreSQL/Neon", connected: false }, { status: 503 });
+  }
 }
