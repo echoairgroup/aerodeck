@@ -14,6 +14,7 @@ type Flight = {
   notes: string;
   route?: string;
   source?: "manual" | "simbrief" | "newsky";
+  status?: "planned" | "active" | "logged";
   flightNumber?: string;
   cruiseAltitude?: string;
   blockFuel?: string;
@@ -30,7 +31,15 @@ function cleanProfile(value: any) {
 
 function cleanFlights(value: any): Flight[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((flight) => flight && typeof flight === "object" && flight.id !== "seed");
+  return value
+    .filter((flight) => flight && typeof flight === "object" && flight.id !== "seed")
+    .map((flight) => {
+      const existingStatus = flight.status;
+      const status = existingStatus === "planned" || existingStatus === "active" || existingStatus === "logged"
+        ? existingStatus
+        : (String(flight.duration || "").match(/^\\d{1,3}:\\d{2}$/) && String(flight.landing || "").trim() ? "logged" : "planned");
+      return { ...flight, status } as Flight;
+    });
 }
 
 function cleanFavorites(value: any): string[] {
@@ -405,7 +414,7 @@ export default function AeroDeck({ initialSection = "dashboard" }: { initialSect
 function Router(props: any) {
   if (props.section === "flight") return <FlightCenter {...props} />;
   if (props.section === "simbrief") return <SimBrief {...props} />;
-  if (props.section === "newsky") return <NewSky />;
+  if (props.section === "newsky") return <NewSky {...props} />;
   if (props.section === "airports") return <Airports {...props} />;
   if (props.section === "aircraft") return <Aircraft {...props} />;
   if (props.section === "weather") return <Weather />;
@@ -438,7 +447,8 @@ function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: "li
 function Dashboard({ flights, profile, favorites, go }: any) {
   const [network, setNetwork] = useState<any>(null);
   const [weather, setWeather] = useState<any[]>([]);
-  const f = flights[0];
+  const f = flights.find((flight: Flight) => flight.status !== "logged");
+  const loggedFlights = flights.filter((flight: Flight) => flight.status === "logged");
   useEffect(() => {
     fetch("/api/vatsim").then((r) => r.ok ? r.json() : Promise.reject()).then(setNetwork).catch(() => {});
     fetch("/api/metar?icao=EDDL,EHAM,LGSM").then((r) => r.ok ? r.json() : Promise.reject()).then((d) => setWeather(d.items || [])).catch(() => {});
@@ -447,7 +457,7 @@ function Dashboard({ flights, profile, favorites, go }: any) {
     <Header eyebrow="FLIGHT WORKSPACE" title={profile.name ? "Welcome back, " + profile.name : "Your flight workspace"} desc="Your saved plans, live network data and weather—without demo flights or invented flight stats." action={<div className="actions"><button className="btn" onClick={() => go("flight")}>Plan a flight</button><button className="btn primary" onClick={() => go("simbrief")}>Import an OFP</button></div>} />
     <div className="hero-grid">
       {f ? <Card className="hero-card">
-        <div className="card-head"><div><small>{f.source === "simbrief" ? "LATEST IMPORTED OFP" : "SAVED FLIGHT"}</small><h2>{f.from || "—"} <span>→</span> {f.to || "—"}</h2><p>{[f.callsign, f.aircraft, f.duration, f.notes].filter(Boolean).join(" · ") || "Flight details not provided"}</p></div><Badge tone="accent">{f.source === "simbrief" ? "SIMBRIEF" : f.source === "newsky" ? "NEWSKY" : "SAVED"}</Badge></div>
+        <div className="card-head"><div><small>{f.source === "simbrief" ? "LATEST IMPORTED OFP" : f.source === "newsky" ? "NEWSKY FLIGHT" : "SAVED FLIGHT"}</small><h2>{f.from || "—"} <span>→</span> {f.to || "—"}</h2><p>{[f.callsign, f.aircraft, f.duration, f.notes].filter(Boolean).join(" · ") || "Flight details not provided"}</p></div><Badge tone="accent">{f.source === "simbrief" ? "SIMBRIEF" : f.source === "newsky" ? "NEWSKY" : "SAVED"}</Badge></div>
         <div className="route-strip"><div><b>{f.from || "—"}</b><span>DEPARTURE</span></div><i>✈</i><div><b>{f.to || "—"}</b><span>DESTINATION</span></div></div>
         <div className="stat-grid four"><Stat label="Aircraft" value={f.aircraft || "—"}/><Stat label="Callsign" value={f.callsign || "—"}/><Stat label="Cruise altitude" value={f.cruiseAltitude || "—"}/><Stat label="Block fuel" value={f.blockFuel || "—"}/></div>
         {f.route && <p className="route-summary">{f.route}</p>}
@@ -463,7 +473,7 @@ function Dashboard({ flights, profile, favorites, go }: any) {
         <button className="btn full" onClick={() => go("vatsim")}>Explore VATSIM</button>
       </Card>
     </div>
-    <div className="stat-grid four"><Stat label="Saved flights" value={flights.length}/><Stat label="Saved favourites" value={favorites.length}/><Stat label="Home airport" value={profile.home || "—"}/><Stat label="Simulator" value={profile.sim || "—"}/></div>
+    <div className="stat-grid four"><Stat label="Saved plans / flights" value={flights.length}/><Stat label="Completed flights" value={loggedFlights.length}/><Stat label="Logged hours" value={hours(loggedFlights)}/><Stat label="Home airport" value={profile.home || "—"}/></div>
     <div className="grid-3">
       <Card><div className="card-head"><div><small>QUICK ACCESS</small><h3>Flight tools</h3></div></div><div className="quick-actions">{[["Flight Center","flight","✈"],["Weather","weather","◌"],["VATSIM","vatsim","◎"],["NewSky","newsky","↗"],["Logbook","logbook","▤"],["Training","training","◆"]].map((x) => <button key={x[1]} onClick={() => go(x[1])}><i>{x[2]}</i><b>{x[0]}</b></button>)}</div></Card>
       <Card><div className="card-head"><div><small>LIVE WEATHER</small><h3>Latest METAR reports</h3></div><button className="link" onClick={() => go("weather")}>Open</button></div><div className="list">{weather.slice(0,3).map((m:any) => <div className="row" key={m.id}><div><b>{m.id}</b><span>{m.metar || "No report supplied"}</span></div><Badge tone="live">LIVE</Badge></div>)}{!weather.length && <p className="muted">Live METAR data has not loaded yet.</p>}</div></Card>
@@ -478,7 +488,7 @@ function FlightCenter({ flights, setFlights, go, notify }: any) {
     const from = f.from.trim().toUpperCase();
     const to = f.to.trim().toUpperCase();
     if (!/^[A-Z]{4}$/.test(from) || !/^[A-Z]{4}$/.test(to)) return notify("Enter valid four-letter ICAO departure and destination codes.");
-    const flight: Flight = { id: crypto.randomUUID(), ...f, date:f.date || new Date().toISOString().slice(0,10), callsign:f.callsign.trim(), aircraft:f.aircraft.trim().toUpperCase(), from, to, source:"manual" };
+    const flight: Flight = { id: crypto.randomUUID(), ...f, date:f.date || new Date().toISOString().slice(0,10), callsign:f.callsign.trim(), aircraft:f.aircraft.trim().toUpperCase(), from, to, source:"manual", status:"planned" };
     setFlights((current: Flight[]) => [flight, ...current]);
     notify("Flight saved");
     go("logbook");
@@ -537,9 +547,10 @@ function SimBrief({ notify, setFlights, go }: any) {
       to: destination,
       duration: duration === "—" ? "" : duration,
       landing: "",
-      date: displayValue(data?.params?.date, new Date().toISOString().slice(0,10)),
+      date: displayValue(data?.params?.date) === "—" ? "" : displayValue(data?.params?.date),
       notes: "Imported from SimBrief",
       source: "simbrief",
+      status: "planned",
       route: route === "—" ? "" : route,
       flightNumber: displayValue(data?.params?.flight) === "—" ? "" : displayValue(data?.params?.flight),
       cruiseAltitude: cruise === "—" ? "" : cruise,
@@ -732,7 +743,7 @@ function pickRecordValue(record: any, paths: string[]): string {
   return "—";
 }
 
-function NewSky() {
+function NewSky({ setFlights, go, notify }: any) {
   const [view, setView] = useState<"ongoing" | "recent">("ongoing");
   const [result, setResult] = useState<any>(null);
   const [selected, setSelected] = useState<any>(null);
@@ -762,6 +773,37 @@ function NewSky() {
       setSelected(body.flight || body);
     } catch { setSelected(record); }
   };
+
+  const importSelectedFlight = () => {
+    if (!selected) return;
+    const from = pickRecordValue(selected, ["departure.icao","departure.icaoCode","departureIcao","origin.icao","origin","departureAirport.icao","departureAirportIcao"]);
+    const to = pickRecordValue(selected, ["arrival.icao","arrival.icaoCode","destinationIcao","destination.icao","destination","arrivalAirport.icao","arrivalAirportIcao"]);
+    if (!/^[A-Z0-9]{4}$/.test(from) || !/^[A-Z0-9]{4}$/.test(to)) {
+      setError("This NewSky record does not provide both ICAO departure and destination codes, so AeroDeck cannot safely import it as a flight.");
+      return;
+    }
+    const rawDuration = pickRecordValue(selected, ["flightTime","flight_time","duration","blockTime","block_time","times.flight"]);
+    const duration = /^\\d{1,3}:\\d{2}$/.test(rawDuration) ? rawDuration : "";
+    const rawDate = pickRecordValue(selected, ["date","flightDate","flight_date","createdAt","departureTime","scheduledDeparture","startTime"]);
+    const flight: Flight = {
+      id: crypto.randomUUID(),
+      callsign: pickRecordValue(selected, ["callsign","atc.callsign","flightNumber","flight_number"]) === "—" ? "" : pickRecordValue(selected, ["callsign","atc.callsign","flightNumber","flight_number"]),
+      aircraft: pickRecordValue(selected, ["aircraft.icao","aircraft.icaoCode","aircraft.name","aircraftIcao","aircraft_code","aircraft"]) === "—" ? "" : pickRecordValue(selected, ["aircraft.icao","aircraft.icaoCode","aircraft.name","aircraftIcao","aircraft_code","aircraft"]),
+      from,
+      to,
+      duration,
+      landing: pickRecordValue(selected, ["landingRateFpm","landingRate","landing_rate_fpm","landing.rate"]) === "—" ? "" : pickRecordValue(selected, ["landingRateFpm","landingRate","landing_rate_fpm","landing.rate"]),
+      date: rawDate === "—" ? "" : rawDate,
+      notes: "Imported from NewSky",
+      source: "newsky",
+      status: view === "recent" ? "logged" : "active",
+      route: pickRecordValue(selected, ["route","flightPlan.route","flight_plan.route"]) === "—" ? "" : pickRecordValue(selected, ["route","flightPlan.route","flight_plan.route"]),
+    };
+    setFlights((current: Flight[]) => [flight, ...current.filter((item) => item.id !== flight.id)]);
+    notify(view === "recent" ? "NewSky flight imported into the logbook" : "Ongoing NewSky flight imported");
+    go(view === "recent" ? "logbook" : "flight");
+  };
+
   useEffect(() => { void load("ongoing"); }, []);
 
   return <>
@@ -785,7 +827,8 @@ function NewSky() {
     </tbody></table></div></Card>}
     {selected && <Card><div className="card-head"><div><small>FLIGHT DETAILS</small><h3>{pickRecordValue(selected,["callsign","atc.callsign","flightNumber","id","_id"])}</h3></div><button className="btn" onClick={()=>setSelected(null)}>Close</button></div>
       <div className="grid-2"><div className="data-pair"><span>Route</span><b>{pickRecordValue(selected,["departure.icao","departureIcao","origin.icao","origin"])} → {pickRecordValue(selected,["arrival.icao","destinationIcao","destination.icao","destination"])}</b></div><div className="data-pair"><span>Landing rate</span><b>{pickRecordValue(selected,["landingRateFpm","landingRate","landing_rate_fpm","landing.rate"])}</b></div></div>
-      <details><summary>Full response from NewSky</summary><pre>{JSON.stringify(selected,null,2).slice(0,30000)}</pre></details>
+      <div className="actions"><button className="btn primary" onClick={importSelectedFlight}>Import into AeroDeck</button></div>
+      <details><summary>Full response from NewSky</summary><pre>{JSON.stringify(selected,null,30000).slice(0,30000)}</pre></details>
     </Card>}
     <Card><small>SETUP</small><h3>Secure API connection</h3><p>NewSky airline endpoints require an API key with the appropriate scope. Store it in the hosting provider as <code>NEWSKY_API_KEY</code>; the key is used only on the server and is never sent to the browser. The API key must include the <b>flights</b> scope for flight lists/details.</p><a href="https://wiki.newsky.app/en/airline/airline-api" target="_blank" rel="noreferrer">NewSky API documentation ↗</a></Card>
   </>;
@@ -823,16 +866,17 @@ function Calculators() {
 }
 
 function Logbook({ flights,setFlights,notify }:any) {
+  const loggedFlights = flights.filter((flight: Flight) => flight.status === "logged");
   const [d,setD]=useState({callsign:"",aircraft:"",from:"",to:"",duration:"",landing:"",date:"",notes:""});
   const add=()=>{
     const from=d.from.trim().toUpperCase();
     const to=d.to.trim().toUpperCase();
     if(!/^[A-Z]{4}$/.test(from)||!/^[A-Z]{4}$/.test(to)){notify("Enter valid four-letter departure and destination ICAO codes.");return;}
-    setFlights([{id:crypto.randomUUID(),...d,from,to,date:d.date||new Date().toISOString().slice(0,10),source:"manual"},...flights]);
+    setFlights([{id:crypto.randomUUID(),...d,from,to,date:d.date||new Date().toISOString().slice(0,10),source:"manual",status:"logged"},...flights]);
     setD({callsign:"",aircraft:"",from:"",to:"",duration:"",landing:"",date:"",notes:""});
     notify("Flight logged");
   };
-  return <><Header eyebrow="LOGBOOK" title="Personal Logbook" desc="Keep your flight history in AeroDeck." action={<button className="btn primary" onClick={add}>Log flight</button>}/><div className="stat-grid four"><Stat label="Flights" value={flights.length}/><Stat label="Approx. hours" value={hours(flights)}/><Stat label="Airports" value={new Set(flights.flatMap((x:Flight)=>[x.from,x.to])).size}/><Stat label="Best landing" value={bestLanding(flights)}/></div><div className="grid-2"><Card><small>NEW ENTRY</small><h3>Log flight</h3><div className="form-grid two"><Field label="Callsign" value={d.callsign} onChange={(v)=>setD({...d,callsign:v})}/><Field label="Aircraft" value={d.aircraft} onChange={(v)=>setD({...d,aircraft:v})}/><Field label="Departure" value={d.from} onChange={(v)=>setD({...d,from:v.toUpperCase()})}/><Field label="Destination" value={d.to} onChange={(v)=>setD({...d,to:v.toUpperCase()})}/><Field label="Duration" value={d.duration} onChange={(v)=>setD({...d,duration:v})}/><label className="field"><span>Flight date</span><input type="date" value={d.date} onChange={(e)=>setD({...d,date:e.target.value})}/></label><Field label="Landing rate" value={d.landing} onChange={(v)=>setD({...d,landing:v})}/></div><label className="field"><span>Notes</span><textarea value={d.notes} onChange={(e)=>setD({...d,notes:e.target.value})}/></label></Card><Card><small>HISTORY</small><h3>Recent flights</h3><div className="list">{flights.map((x:Flight)=><div className="row" key={x.id}><div><b>{x.callsign}</b><span>{x.from} → {x.to} · {x.aircraft}</span></div><span>{x.landing}</span></div>)}</div></Card></div></>;
+  return <><Header eyebrow="LOGBOOK" title="Personal Logbook" desc="Keep your flight history in AeroDeck." action={<button className="btn primary" onClick={add}>Log flight</button>}/><div className="stat-grid four"><Stat label="Logged flights" value={loggedFlights.length}/><Stat label="Logged hours" value={hours(loggedFlights)}/><Stat label="Airports visited" value={new Set(loggedFlights.flatMap((x:Flight)=>[x.from,x.to])).size}/><Stat label="Best landing" value={bestLanding(loggedFlights)}/></div><div className="grid-2"><Card><small>NEW ENTRY</small><h3>Log flight</h3><div className="form-grid two"><Field label="Callsign" value={d.callsign} onChange={(v)=>setD({...d,callsign:v})}/><Field label="Aircraft" value={d.aircraft} onChange={(v)=>setD({...d,aircraft:v})}/><Field label="Departure" value={d.from} onChange={(v)=>setD({...d,from:v.toUpperCase()})}/><Field label="Destination" value={d.to} onChange={(v)=>setD({...d,to:v.toUpperCase()})}/><Field label="Duration" value={d.duration} onChange={(v)=>setD({...d,duration:v})}/><label className="field"><span>Flight date</span><input type="date" value={d.date} onChange={(e)=>setD({...d,date:e.target.value})}/></label><Field label="Landing rate" value={d.landing} onChange={(v)=>setD({...d,landing:v})}/></div><label className="field"><span>Notes</span><textarea value={d.notes} onChange={(e)=>setD({...d,notes:e.target.value})}/></label></Card><Card><small>HISTORY</small><h3>Recent flights</h3><div className="list">{loggedFlights.map((x:Flight)=><div className="row" key={x.id}><div><b>{x.callsign || "Callsign not recorded"}</b><span>{x.from} → {x.to} · {x.aircraft || "Aircraft not recorded"} · {x.date || "Date not supplied"}</span></div><span>{x.landing || "Landing rate not recorded"}</span></div>)}{!loggedFlights.length && <div className="empty">No completed flights logged yet. Use a NewSky recent flight import or enter your flight details here.</div>}</div></Card></div></>;
 }
 
 function Favorites({ favorites, go }:any) {
@@ -872,7 +916,7 @@ function Settings({ profile,setProfile }:any) {
 }
 
 function hours(fs:Flight[]) {
-  return fs.reduce((sum,f)=>{ const parts=(f.duration||"0:0").split(":").map(Number); return sum+(parts[0]||0)+(parts[1]||0)/60; },0).toFixed(1);
+  return fs.reduce((sum,f)=>{ const match=String(f.duration||"").trim().match(/^(\\d{1,3}):([0-5]\\d)$/); if(!match)return sum; return sum+Number(match[1])+Number(match[2])/60; },0).toFixed(1);
 }
 function bestLanding(fs:Flight[]) {
   const values = fs
