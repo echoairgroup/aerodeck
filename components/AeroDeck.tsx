@@ -590,21 +590,64 @@ function Airports({ favorites, setFavorites, notes, setNotes }: any) {
 }
 
 function Aircraft({ favorites, setFavorites, notes, setNotes }: any) {
-  const [q,setQ] = useState(""); const [sel,setSel] = useState(aircraft[0]);
-  const list = aircraft.filter((x) => (x.icao+" "+x.name+" "+x.family).toLowerCase().includes(q.toLowerCase()));
-  const toggle = () => setFavorites(favorites.includes(sel.icao) ? favorites.filter((x:string)=>x!==sel.icao) : [...favorites,sel.icao]);
-  return <><Header eyebrow="AIRCRAFT" title="Aircraft Library" desc="Simulation-oriented reference pages for the aircraft you fly."/><div className="grid-2"><Card><Field label="Search" value={q} onChange={setQ} placeholder="A320, 737, E190…"/><div className="list scroll">{list.map((a)=><button className={"row button-row "+(a.icao===sel.icao?"selected":"")} key={a.icao} onClick={()=>setSel(a)}><div><b>{a.icao}</b><span>{a.name}</span></div><small>{a.family}</small></button>)}</div></Card><Card><div className="card-head"><div><small>AIRCRAFT PROFILE</small><h3>{sel.icao}</h3></div><button className={"star "+(favorites.includes(sel.icao)?"on":"")} onClick={toggle}>★</button></div><h2>{sel.name}</h2><p>{sel.family}</p><div className="stat-grid three"><Stat label="Range" value={sel.range}/><Stat label="Cruise" value={sel.cruise}/><Stat label="MTOW" value={sel.mtow}/><Stat label="Seats" value={sel.seats}/><Stat label="Engine" value={sel.engine}/></div><div className="notice">Simulation reference only. Verify technical data against current aircraft documentation.</div><label className="field"><span>Personal aircraft note</span><textarea value={notes[sel.icao] || ""} onChange={(e)=>setNotes({...notes,[sel.icao]:e.target.value})} placeholder="Your notes for this aircraft…"/></label></Card></div></>;
-}
+  const [q,setQ] = useState("");
+  const [items,setItems] = useState<any[]>([]);
+  const [loading,setLoading] = useState(true);
+  const [error,setError] = useState("");
+  const [sourceInfo,setSourceInfo] = useState<any>(null);
+  const [selected,setSelected] = useState<any>(null);
 
-function pickRecordValue(record: any, paths: string[]): string {
-  for (const path of paths) {
-    const value = path.split(".").reduce((current: any, key) => current?.[key], record);
-    if (value !== undefined && value !== null && String(value).trim() !== "") {
-      if (typeof value === "object") return displayValue(value.icao, value.name, value.callsign, value.code, value.id);
-      return String(value);
-    }
-  }
-  return "—";
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/aircraft", { signal: controller.signal })
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Aircraft data is unavailable.");
+        setItems(Array.isArray(body.items) ? body.items : []);
+        setSourceInfo(body);
+      })
+      .catch((e:any) => { if (!controller.signal.aborted) setError(e.message || "Aircraft data is unavailable."); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, []);
+
+  const list = items.filter((item:any) =>
+    [item.icao,item.iata,item.name].join(" ").toLowerCase().includes(q.trim().toLowerCase())
+  );
+  const active = (selected && list.some((item:any) => item.name === selected.name && item.icao === selected.icao))
+    ? selected
+    : list[0] || null;
+  const noteKey = active?.icao || active?.name || "";
+  const toggle = () => {
+    if (!active?.icao) return;
+    setFavorites(favorites.includes(active.icao) ? favorites.filter((x:string)=>x!==active.icao) : [...favorites,active.icao]);
+  };
+
+  return <>
+    <Header eyebrow="AIRCRAFT REFERENCE" title="Aircraft library" desc="Search aircraft type names and IATA/ICAO type codes. This directory uses a curated public reference dataset; it does not invent performance specifications." />
+    <div className="grid-2">
+      <Card>
+        <Field label="Search aircraft types" value={q} onChange={setQ} placeholder="A320neo, B738, A359, E190…"/>
+        {loading && <p className="muted">Loading aircraft reference data…</p>}
+        {error && <div className="error">{error}</div>}
+        <div className="list scroll">
+          {list.map((item:any,index:number)=><button className={"row button-row "+(item.name===active?.name&&item.icao===active?.icao?"selected":"")} key={item.icao+"-"+item.iata+"-"+item.name+"-"+index} onClick={()=>setSelected(item)}>
+            <div><b>{item.icao || "ICAO unavailable"}{item.iata ? " · "+item.iata : ""}</b><span>{item.name}</span></div>
+          </button>)}
+          {!loading && !error && !list.length && <div className="empty">No matching aircraft type in this dataset.</div>}
+          {!loading && error && !items.length && <div className="empty">Aircraft results are not shown until the source is available.</div>}
+        </div>
+      </Card>
+      {active && <Card>
+        <div className="card-head"><div><small>AIRCRAFT TYPE</small><h3>{active.icao || "ICAO code unavailable"}</h3></div><button className={"star "+(favorites.includes(active.icao)?"on":"")} onClick={toggle} disabled={!active.icao} aria-label="Toggle aircraft favourite">★</button></div>
+        <h2>{active.name}</h2>
+        <div className="stat-grid three"><Stat label="ICAO type code" value={active.icao || "—"}/><Stat label="IATA type code" value={active.iata || "—"}/><Stat label="Data source" value={active.source || sourceInfo?.source || "—"}/></div>
+        <label className="field"><span>Personal aircraft note</span><textarea value={notes[noteKey] || ""} onChange={(e)=>setNotes({...notes,[noteKey]:e.target.value})} placeholder="Your aircraft notes…"/></label>
+        <div className="notice">Performance data such as range, engine variant, MTOW and seating are intentionally omitted because this reference does not supply those fields. Use the aircraft's official or simulator-specific documentation for those values.</div>
+        <p className="muted">Source: <a href={sourceInfo?.sourceUrl || "https://openflights.org/data"} target="_blank" rel="noreferrer">OpenFlights aircraft database</a>. {sourceInfo?.licence || "Open Database License (ODbL)"}. The reference list is curated and may not contain every aircraft type.</p>
+      </Card>}
+    </div>
+  </>;
 }
 
 function NewSky() {
