@@ -77,22 +77,24 @@ function navlogEntries(data: any): any[] {
 function routeCoordinates(data: any) {
   const coordinate = (item: any, label: string) => {
     if (!item) return null;
-    const lat = Number(item.pos_lat ?? item.lat ?? item.pos?.lat ?? item.position?.lat);
-    const lon = Number(item.pos_long ?? item.lon ?? item.long ?? item.pos?.lon ?? item.pos?.long ?? item.position?.lon);
+    const lat = Number(item.pos_lat ?? item.lat ?? item.latitude ?? item.pos?.lat ?? item.position?.lat ?? item.position?.latitude ?? item.location?.lat ?? item.location?.latitude);
+    const lon = Number(item.pos_long ?? item.lon ?? item.long ?? item.longitude ?? item.pos?.lon ?? item.pos?.long ?? item.position?.lon ?? item.position?.long ?? item.position?.longitude ?? item.location?.lon ?? item.location?.long ?? item.location?.longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
     return { label, lat, lon };
   };
   const fixes = navlogEntries(data).map((item: any, index: number) =>
     coordinate(item, displayValue(item.ident, item.name, item.fix, "Waypoint " + (index + 1)))
   ).filter(Boolean);
-  const origin = coordinate(data?.origin?.pos ?? data?.origin, displayValue(data?.origin?.icao, data?.params?.orig, "Origin"));
-  const destination = coordinate(data?.destination?.pos ?? data?.destination, displayValue(data?.destination?.icao, data?.params?.dest, "Destination"));
+  const originObject = data?.origin?.pos ?? data?.origin ?? data?.departure?.pos ?? data?.departure ?? data?.departureAirport ?? data?.departure_airport;
+  const destinationObject = data?.destination?.pos ?? data?.destination ?? data?.arrival?.pos ?? data?.arrival ?? data?.arrivalAirport ?? data?.arrival_airport;
+  const origin = coordinate(originObject, displayValue(data?.origin?.icao, data?.departure?.icao, data?.departureIcao, data?.params?.orig, "Origin"));
+  const destination = coordinate(destinationObject, displayValue(data?.destination?.icao, data?.arrival?.icao, data?.destinationIcao, data?.params?.dest, "Destination"));
   return [origin, ...fixes, destination].filter(Boolean) as { label: string; lat: number; lon: number }[];
 }
 
-function RouteMap({ data }: { data: any }) {
+function RouteMap({ data, sourceName = "SimBrief" }: { data: any; sourceName?: string }) {
   const points = routeCoordinates(data);
-  if (points.length < 2) return <div className="notice">SimBrief did not supply enough waypoint coordinates for a map on this OFP. No route is guessed.</div>;
+  if (points.length < 3) return <div className="notice">{sourceName} did not supply a complete set of route-waypoint coordinates. AeroDeck does not draw a guessed straight-line path.</div>;
   const minLon = Math.min(...points.map((point) => point.lon));
   const maxLon = Math.max(...points.map((point) => point.lon));
   const minLat = Math.min(...points.map((point) => point.lat));
@@ -103,7 +105,7 @@ function RouteMap({ data }: { data: any }) {
   });
   const projected = points.map(project);
   return <div className="route-map">
-    <svg viewBox="0 0 700 220" role="img" aria-label="Route based on coordinates from the imported SimBrief OFP">
+    <svg viewBox="0 0 700 220" role="img" aria-label={"Route based on coordinates supplied by " + sourceName}>
       <defs><pattern id="route-grid" width="35" height="35" patternUnits="userSpaceOnUse"><path d="M 35 0 L 0 0 0 35" fill="none" stroke="currentColor" strokeOpacity=".12" strokeWidth="1"/></pattern></defs>
       <rect x="0" y="0" width="700" height="220" fill="url(#route-grid)" rx="10"/>
       <polyline points={projected.map((point) => point.x + "," + point.y).join(" ")} fill="none" stroke="#1686ba" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
@@ -112,7 +114,7 @@ function RouteMap({ data }: { data: any }) {
         {(index === 0 || index === projected.length - 1) && <text x={point.x + (index === 0 ? 9 : -9)} y={point.y - 9} textAnchor={index === 0 ? "start" : "end"} fill="currentColor" fontSize="11" fontWeight="700">{points[index].label}</text>}
       </g>)}
     </svg>
-    <div className="route-map-caption">{points.length} route points · coordinates supplied by SimBrief</div>
+    <div className="route-map-caption">{points.length} route points · coordinates supplied by {sourceName}</div>
   </div>;
 }
 
@@ -582,7 +584,7 @@ function SimBrief({ notify, setFlights, go }: any) {
       <Card className="ofp-title"><div className="card-head"><div><small>IMPORTED OFP</small><h2>{origin} <span>→</span> {destination}</h2><p>{[callsign, aircraftCode, displayValue(data?.params?.date)].filter((v)=>v!=="—").join(" · ")}</p></div><Badge tone="live">SIMBRIEF DATA</Badge></div><button className="btn primary" onClick={saveFlight}>Save to AeroDeck flights</button></Card>
       <div className="stat-grid four"><Stat label="Aircraft" value={aircraftCode}/><Stat label="Callsign / flight" value={callsign}/><Stat label="Route distance" value={displayValue(data?.general?.route_distance, data?.params?.totaldist)==="—" ? "—" : displayValue(data?.general?.route_distance, data?.params?.totaldist) + " nm"}/><Stat label="Estimated en route" value={displayValue(data?.times?.est_time_enroute, data?.params?.duration)}/></div>
       <div className="grid-2">
-        <Card><div className="card-head"><div><small>ROUTE</small><h3>Flight path</h3></div></div><p className="route-text">{route}</p><RouteMap data={data}/></Card>
+        <Card><div className="card-head"><div><small>ROUTE</small><h3>Flight path</h3></div></div><p className="route-text">{route}</p><RouteMap data={data} sourceName="SimBrief"/></Card>
         <Card><small>FLIGHT DETAILS</small><h3>Aircraft and dispatch</h3><div className="data-grid">
           <div className="data-pair"><span>Registration</span><b>{displayValue(data?.aircraft?.reg)}</b></div>
           <div className="data-pair"><span>Aircraft name</span><b>{displayValue(data?.aircraft?.name)}</b></div>
@@ -846,6 +848,7 @@ function NewSky({ setFlights, go, notify }: any) {
     </tbody></table></div></Card>}
     {selected && <Card><div className="card-head"><div><small>FLIGHT DETAILS</small><h3>{pickRecordValue(selected,["callsign","atc.callsign","flightNumber","id","_id"])}</h3></div><button className="btn" onClick={()=>setSelected(null)}>Close</button></div>
       <div className="grid-2"><div className="data-pair"><span>Route</span><b>{pickRecordValue(selected,["departure.icao","departureIcao","origin.icao","origin"])} → {pickRecordValue(selected,["arrival.icao","destinationIcao","destination.icao","destination"])}</b></div><div className="data-pair"><span>Landing rate</span><b>{pickRecordValue(selected,["landingRateFpm","landingRate","landing_rate_fpm","landing.rate"])}</b></div></div>
+      <RouteMap data={selected} sourceName="NewSky"/>
       <div className="actions"><button className="btn primary" onClick={importSelectedFlight}>Import into AeroDeck</button></div>
       <details><summary>Full response from NewSky</summary><pre>{JSON.stringify(selected,null,30000).slice(0,30000)}</pre></details>
     </Card>}
