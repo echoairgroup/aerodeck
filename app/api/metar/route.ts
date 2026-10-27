@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export const revalidate = 60;
-
 export async function GET(request: NextRequest) {
   const raw = request.nextUrl.searchParams.get("icao")?.trim().toUpperCase();
   if (!raw) return NextResponse.json({ error: "Missing ICAO" }, { status: 400 });
