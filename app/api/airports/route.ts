@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
       fetch("https://ourairports.com/data/runways.csv", {
         headers: { Accept: "text/csv" },
         next: { revalidate: 86400 },
-      }),
+      }).catch(() => null),
     ]);
 
     if (!airportResponse.ok) {
@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => relevance(a, query) - relevance(b, query) || a.name.localeCompare(b.name))
       .slice(0, 50);
 
-    if (runwayResponse.ok && matches.length) {
+    if (runwayResponse?.ok && matches.length) {
       const runwayCsv = await runwayResponse.text();
       const runwayRows = parse(runwayCsv, { columns: true, skip_empty_lines: true, bom: true, relax_quotes: true }) as AirportRow[];
       const wantedIds = new Set(matches.map((item) => item.sourceId));
@@ -111,7 +111,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       items: matches.map(({ sourceId: _sourceId, ...item }) => item),
       source: "OurAirports",
-      runwayDataAvailable: runwayResponse.ok
+      runwayDataAvailable: Boolean(runwayResponse?.ok)
     }, {
       headers: { "Cache-Control": "public, max-age=60, stale-while-revalidate=3600" }
     });
