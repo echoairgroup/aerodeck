@@ -39,7 +39,7 @@ function cleanFlights(value: any): Flight[] {
       const existingStatus = flight.status;
       const status = existingStatus === "planned" || existingStatus === "active" || existingStatus === "logged"
         ? existingStatus
-        : (String(flight.duration || "").match(/^\\d{1,3}:\\d{2}$/) && String(flight.landing || "").trim() ? "logged" : "planned");
+        : (String(flight.duration || "").match(/^\d{1,3}:\d{2}$/) && String(flight.landing || "").trim() ? "logged" : "planned");
       return { ...flight, status } as Flight;
     });
 }
@@ -532,7 +532,7 @@ function SimBrief({ notify, setFlights, go }: any) {
     if (!identifier) return setError("Enter your SimBrief username or Pilot ID.");
     setLoading(true); setError(""); setData(null);
     try {
-      const key = /^\\d+$/.test(identifier) ? "userid" : "username";
+      const key = /^\d+$/.test(identifier) ? "userid" : "username";
       const response = await fetch("/api/simbrief?" + key + "=" + encodeURIComponent(identifier), { cache: "no-store" });
       const result = await response.json();
       if (!response.ok || String(result?.fetch?.status || "").toLowerCase() === "error") throw new Error(result.error || result?.fetch?.message || "SimBrief did not return a usable OFP. Check the identifier and ensure a latest OFP exists.");
@@ -802,7 +802,7 @@ function NewSky({ setFlights, go, notify }: any) {
       return;
     }
     const rawDuration = pickRecordValue(selected, ["flightTime","flight_time","duration","blockTime","block_time","times.flight"]);
-    const duration = /^\\d{1,3}:\\d{2}$/.test(rawDuration) ? rawDuration : "";
+    const duration = /^\d{1,3}:\d{2}$/.test(rawDuration) ? rawDuration : "";
     const rawDate = pickRecordValue(selected, ["date","flightDate","flight_date","createdAt","departureTime","scheduledDeparture","startTime"]);
     const flight: Flight = {
       id: crypto.randomUUID(),
@@ -948,11 +948,11 @@ function Settings({ profile,setProfile }:any) {
 }
 
 function hours(fs:Flight[]) {
-  return fs.reduce((sum,f)=>{ const match=String(f.duration||"").trim().match(/^(\\d{1,3}):([0-5]\\d)$/); if(!match)return sum; return sum+Number(match[1])+Number(match[2])/60; },0).toFixed(1);
+  return fs.reduce((sum,f)=>{ const match=String(f.duration||"").trim().match(/^(\d{1,3}):([0-5]\d)$/); if(!match)return sum; return sum+Number(match[1])+Number(match[2])/60; },0).toFixed(1);
 }
 function bestLanding(fs:Flight[]) {
   const values = fs
-    .map((flight) => String(flight.landing || "").match(/-?\\d+(?:\\.\\d+)?/))
+    .map((flight) => String(flight.landing || "").match(/-?\d+(?:\.\d+)?/))
     .filter((match): match is RegExpMatchArray => Boolean(match))
     .map((match) => Number(match[0]))
     .filter((value) => Number.isFinite(value));
