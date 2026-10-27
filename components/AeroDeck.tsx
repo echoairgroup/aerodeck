@@ -40,7 +40,7 @@ function cleanProfile(value: any) {
 function cleanFlights(value: any): Flight[] {
   if (!Array.isArray(value)) return [];
   return value
-    .filter((flight) => flight && typeof flight === "object" && flight.id !== "seed")
+    .filter((flight) => flight && typeof flight === "object" && flight.id !== "seed" && flight.from !== "EDDL" && flight.to !== "LGSM" && flight.notes !== "Greek Islands Discovery")
     .map((flight) => {
       const existingStatus = flight.status;
       const status = existingStatus === "planned" || existingStatus === "active" || existingStatus === "logged"
